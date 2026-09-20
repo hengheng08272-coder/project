@@ -8,7 +8,6 @@ import {
   Settings,
   ShieldCheck,
   Users,
-  Wand2,
   Languages,
 } from 'lucide-react';
 
@@ -28,21 +27,17 @@ interface SidebarProps {
 export function Sidebar({ currentPage, onNavigate, collapsed, isAdmin }: SidebarProps) {
   const [queueCount, setQueueCount] = useState(0);
   const [activeGroups, setActiveGroups] = useState(0);
-  const [automationCount, setAutomationCount] = useState(0);
   const { language, toggleLanguage, t } = useLanguage();
   const status = useConnectionStatus();
 
   useEffect(() => {
     (async () => {
-      const [downloads, groups, rules, forwards] = await Promise.all([
+      const [downloads, groups] = await Promise.all([
         supabase.from('downloads').select('*', { count: 'exact', head: true }).in('status', ['queued', 'downloading']),
         supabase.from('groups').select('*', { count: 'exact', head: true }).eq('active', true),
-        supabase.from('auto_download_rules').select('*', { count: 'exact', head: true }).eq('active', true),
-        supabase.from('forward_jobs').select('*', { count: 'exact', head: true }).in('status', ['queued', 'running']),
       ]);
       setQueueCount(downloads.count ?? 0);
       setActiveGroups(groups.count ?? 0);
-      setAutomationCount((rules.count ?? 0) + (forwards.count ?? 0));
     })();
   }, [currentPage]);
 
@@ -50,7 +45,6 @@ export function Sidebar({ currentPage, onNavigate, collapsed, isAdmin }: Sidebar
     { key: 'dashboard', label: t('nav.dashboard'), icon: LayoutDashboard },
     { key: 'groups', label: t('nav.groups'), icon: Users, badge: activeGroups },
     { key: 'downloads', label: t('nav.downloads'), icon: DownloadCloud, badge: queueCount },
-    { key: 'automation', label: t('nav.automation'), icon: Wand2, badge: automationCount },
     { key: 'urllists', label: t('nav.urllists'), icon: Link2 },
     { key: 'settings', label: t('nav.settings'), icon: Settings },
     { key: 'guide', label: t('nav.guide'), icon: BookOpen },

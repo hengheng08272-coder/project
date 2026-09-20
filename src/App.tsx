@@ -7,7 +7,6 @@ import { SetupNotice } from '@/components/SetupNotice';
 import { Sidebar } from '@/components/Sidebar';
 import { AdminPage } from '@/pages/AdminPage';
 import { AuthPage } from '@/pages/AuthPage';
-import { AutomationPage } from '@/pages/AutomationPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { DownloadsPage } from '@/pages/DownloadsPage';
 import { GroupsPage } from '@/pages/GroupsPage';
@@ -66,7 +65,6 @@ function App() {
     dashboard: { title: t('page.dashboard.title'), subtitle: t('page.dashboard.subtitle') },
     groups: { title: t('page.groups.title'), subtitle: t('page.groups.subtitle') },
     downloads: { title: t('page.downloads.title'), subtitle: t('page.downloads.subtitle') },
-    automation: { title: t('page.automation.title'), subtitle: t('page.automation.subtitle') },
     urllists: { title: t('page.urllists.title'), subtitle: t('page.urllists.subtitle') },
     settings: { title: t('page.settings.title'), subtitle: t('page.settings.subtitle') },
     guide: { title: t('page.guide.title'), subtitle: t('page.guide.subtitle') },
@@ -115,8 +113,6 @@ function App() {
         return <GroupsPage />;
       case 'downloads':
         return <DownloadsPage />;
-      case 'automation':
-        return <AutomationPage />;
       case 'urllists':
         return <UrlListsPage />;
       case 'settings':

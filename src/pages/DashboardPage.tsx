@@ -10,10 +10,8 @@ import {
   Layers,
   Plus,
   RefreshCw,
-  Send,
   Users,
   XCircle,
-  Zap,
 } from 'lucide-react';
 
 import { ActivityChart, type ActivityPoint } from '@/components/ActivityChart';
@@ -21,7 +19,7 @@ import { AppLogo, TelegramGlyph } from '@/components/Brand';
 import { supabase } from '@/lib/supabase';
 import { useConnectionStatus } from '@/lib/hooks';
 import { backendConfigured } from '@/lib/backend';
-import type { Download, Episode, ForwardJob, Group, PageKey, TelegramSettings, Topic } from '@/lib/types';
+import type { Download, Episode, Group, PageKey, TelegramSettings, Topic } from '@/lib/types';
 import { formatBytes, formatTimeAgo, getStatusColor } from '@/lib/utils';
 
 const ACTIVITY_DAYS = 14;
@@ -34,7 +32,6 @@ interface Stats {
   queued: number;
   failed: number;
   storage: number;
-  forwarded: number;
 }
 
 export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => void }) {
@@ -46,7 +43,7 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => v
   const status = useConnectionStatus();
 
   const load = useCallback(async () => {
-    const [dlRes, epRes, groupRes, topicRes, recentRes, tgRes, fwRes] = await Promise.all([
+    const [dlRes, epRes, groupRes, topicRes, recentRes, tgRes] = await Promise.all([
       supabase.from('downloads').select('id, status, completed_at'),
       supabase.from('episodes').select('id, group_id, status, file_size, r2_key'),
       supabase.from('groups').select('*'),
@@ -57,13 +54,11 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => v
         .order('created_at', { ascending: false })
         .limit(6),
       supabase.from('telegram_settings').select('*').maybeSingle(),
-      supabase.from('forward_jobs').select('forwarded_count'),
     ]);
 
     const downloads = (dlRes.data as Pick<Download, 'id' | 'status' | 'completed_at'>[]) || [];
     const episodes = (epRes.data as Episode[]) || [];
     const groups = (groupRes.data as Group[]) || [];
-    const forwardJobs = (fwRes.data as Pick<ForwardJob, 'forwarded_count'>[]) || [];
 
     setStats({
       groups: groups.length,
@@ -73,7 +68,6 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => v
       queued: downloads.filter((d) => d.status === 'queued' || d.status === 'downloading').length,
       failed: downloads.filter((d) => d.status === 'failed').length,
       storage: episodes.filter((e) => e.r2_key).reduce((sum, e) => sum + (e.file_size || 0), 0),
-      forwarded: forwardJobs.reduce((sum, j) => sum + (j.forwarded_count || 0), 0),
     });
 
     setActivity(buildActivity(downloads));
@@ -153,7 +147,7 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => v
 
         {!backendConfigured && (
           <p className="relative mt-4 rounded-lg border border-warning-500/20 bg-warning-500/10 px-3 py-2 text-[11px] text-warning-300">
-            No userbot service is configured yet — scanning, downloading and forwarding stay idle.
+            No userbot service is configured yet — scanning and downloading stay idle.
             See <button onClick={() => onNavigate('guide')} className="underline">How to use</button>.
           </p>
         )}
@@ -162,13 +156,11 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => v
         <div className="relative mt-5 flex flex-wrap gap-2">
           <QuickAction icon={<Plus className="h-3.5 w-3.5" />} label="Add a group" onClick={() => onNavigate('groups')} primary />
           <QuickAction icon={<DownloadCloud className="h-3.5 w-3.5" />} label="Download queue" onClick={() => onNavigate('downloads')} />
-          <QuickAction icon={<Send className="h-3.5 w-3.5" />} label="Forward videos" onClick={() => onNavigate('automation')} />
-          <QuickAction icon={<Zap className="h-3.5 w-3.5" />} label="Automation" onClick={() => onNavigate('automation')} />
         </div>
       </section>
 
       {/* KPI row */}
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         <KpiCard
           icon={<Film className="h-4 w-4" />}
           label="Videos found"
@@ -184,14 +176,6 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => v
           sub={stats ? `${percent(stats.downloaded, stats.episodes)} of all videos` : ''}
           tone="success"
           onClick={() => onNavigate('downloads')}
-        />
-        <KpiCard
-          icon={<Send className="h-4 w-4" />}
-          label="Forwarded"
-          value={stats?.forwarded}
-          sub="into other groups"
-          tone="accent"
-          onClick={() => onNavigate('automation')}
         />
         <KpiCard
           icon={<HardDrive className="h-4 w-4" />}
