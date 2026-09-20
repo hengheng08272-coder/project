@@ -17,6 +17,7 @@ import {
   Clapperboard,
   Download,
   Trash2,
+  Search,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { backendConfigured, deleteR2Object, r2DownloadUrl, testR2Connection } from '@/lib/backend';
@@ -40,6 +41,7 @@ export function R2Page() {
   const [remoteStats, setRemoteStats] = useState<{ object_count?: number; total_bytes?: number } | null>(null);
   const [copied, setCopied] = useState('');
   const [deletingId, setDeletingId] = useState('');
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -120,6 +122,25 @@ export function R2Page() {
       }))
       .sort((a, b) => (a.group?.title || '').localeCompare(b.group?.title || ''));
   }, [episodes, groups, topics]);
+
+  /** Narrows the shows list to whatever matches the search box, by show name, season, or episode. */
+  const filteredShows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return shows;
+    return shows
+      .map((show) => ({
+        ...show,
+        episodes: show.episodes.filter((ep) => {
+          const season = show.topicById.get(ep.topic_id || '')?.title || '';
+          const haystack = [show.group?.title, season, ep.title, ep.file_name, ep.r2_key, String(ep.ep_number ?? '')]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
+          return haystack.includes(q);
+        }),
+      }))
+      .filter((show) => show.episodes.length > 0);
+  }, [shows, search]);
 
   const urlFor = (ep: Episode) => ep.r2_url || (ep.r2_key && settings?.public_url ? `${settings.public_url.replace(/\/+$/, '')}/${ep.r2_key}` : null);
 
@@ -328,12 +349,26 @@ export function R2Page() {
       {/* Files in R2, organized by show and episode number instead of a flat key list */}
       {episodes.length > 0 && (
         <div className="rounded-xl border border-dark-800 bg-dark-900/60 p-5">
-          <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-            <FileVideo className="w-4 h-4 text-accent-400" /> {t('r2.filesInR2Storage')}
-            <span className="text-dark-500 font-normal">({episodes.length})</span>
-          </h3>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+              <FileVideo className="w-4 h-4 text-accent-400" /> {t('r2.filesInR2Storage')}
+              <span className="text-dark-500 font-normal">({episodes.length})</span>
+            </h3>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-dark-500" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t('r2.searchFiles')}
+                className="w-52 rounded-lg border border-dark-700 bg-dark-800 py-1.5 pl-8 pr-3 text-xs text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
+              />
+            </div>
+          </div>
+          {search.trim() && filteredShows.length === 0 && (
+            <p className="py-6 text-center text-xs text-dark-600">{t('r2.noFilesMatch')}</p>
+          )}
           <div className="space-y-4 max-h-[32rem] overflow-y-auto pr-1">
-            {shows.map(({ group, episodes: eps, topicById }) => (
+            {filteredShows.map(({ group, episodes: eps, topicById }) => (
               <div key={group?.id || 'unknown'}>
                 <div className="flex items-center gap-2 mb-1.5 px-0.5">
                   <Clapperboard className="w-3.5 h-3.5 text-primary-400 shrink-0" />
