@@ -11,6 +11,7 @@ import { config } from "./config.js";
 import { db, nowIso, upsertSingle } from "./db.js";
 import { applyAutoRules, retryFailed, runDownload } from "./downloader.js";
 import * as forwarder from "./forwarder.js";
+import { handleMessage as handleLinkBotMessage } from "./linkBot.js";
 import { recordManualUpload } from "./library.js";
 import * as mirror from "./mirror.js";
 import * as takeout from "./takeout.js";
@@ -29,9 +30,9 @@ const app = express();
 app.use(express.json());
 app.use(
   cors({
-    origin: true,
+    origin: config.corsOrigins.includes("*") ? true : config.corsOrigins,
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
+    allowedHeaders: ["Content-Type", "x-api-key"],
   })
 );
 
@@ -620,6 +621,16 @@ app.post(
 app.post(
   "/api/telegram-bot/webhook",
   route(async (req, res) => {
+    // A plain message is the "paste a link, get it downloaded" flow -- open to
+    // anyone, unlike the callback_query branch below which is admin-only.
+    // Handled in the background so Telegram's webhook gets its 200 back
+    // immediately instead of waiting out a whole download.
+    const message = req.body?.message;
+    if (message) {
+      spawn(handleLinkBotMessage(message), `bot link message from ${message.from?.id}`);
+      return res.json({ ok: true });
+    }
+
     const cq = req.body?.callback_query;
     if (!cq) return res.json({ ok: true });
 

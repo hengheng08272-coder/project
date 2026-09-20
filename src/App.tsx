@@ -19,6 +19,11 @@ import { useLanguage } from '@/lib/i18n';
 import { supabase, supabaseConfigured } from '@/lib/supabase';
 import type { PageKey } from '@/lib/types';
 
+// The paywall/tier system is fully built (SubscribePage, AdminPage, capability
+// gating, quota) but not in use right now -- flip this back to true to bring
+// it back without redoing any of that work.
+const SUBSCRIPTION_ENFORCED = false;
+
 function App() {
   const [currentPage, setCurrentPage] = useState<PageKey>('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -101,7 +106,7 @@ function App() {
   // The operator's own account (profiles.is_admin) always gets in, active
   // subscription or not -- otherwise flagging yourself admin after signup
   // would still leave you stuck behind your own paywall.
-  if (!isAdmin && !subStatus?.subscribed) {
+  if (SUBSCRIPTION_ENFORCED && !isAdmin && !subStatus?.subscribed) {
     return <SubscribePage onApproved={refreshEntitlements} />;
   }
 
@@ -116,7 +121,11 @@ function App() {
       case 'urllists':
         return <UrlListsPage />;
       case 'settings':
-        return <SettingsPage capability={subStatus?.capability ?? (isAdmin ? 'pro' : 'basic')} />;
+        return (
+          <SettingsPage
+            capability={SUBSCRIPTION_ENFORCED ? subStatus?.capability ?? (isAdmin ? 'pro' : 'basic') : 'pro'}
+          />
+        );
       case 'guide':
         return <GuidePage onNavigate={setCurrentPage} />;
       case 'admin':
