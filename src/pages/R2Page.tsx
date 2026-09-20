@@ -16,9 +16,10 @@ import {
   Check,
   Clapperboard,
   Download,
+  Trash2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { backendConfigured, r2DownloadUrl, testR2Connection } from '@/lib/backend';
+import { backendConfigured, deleteR2Object, r2DownloadUrl, testR2Connection } from '@/lib/backend';
 import { R2Uploader } from '@/components/R2Uploader';
 import { useLanguage } from '@/lib/i18n';
 import type { R2Settings, Episode, Group, Topic } from '@/lib/types';
@@ -38,6 +39,7 @@ export function R2Page() {
   const [notice, setNotice] = useState('');
   const [remoteStats, setRemoteStats] = useState<{ object_count?: number; total_bytes?: number } | null>(null);
   const [copied, setCopied] = useState('');
+  const [deletingId, setDeletingId] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -74,6 +76,25 @@ export function R2Page() {
     } catch {
       setCopied('');
     }
+  };
+
+  /** Deletes the file from the bucket, then reverts the episode to "not in R2" so it can be re-downloaded. */
+  const handleDelete = async (ep: Episode) => {
+    if (!ep.r2_key) return;
+    const label = ep.ep_number != null ? `EP${ep.ep_number}` : ep.file_name || ep.r2_key;
+    if (!window.confirm(t('r2.deleteConfirm').replace('{file}', label))) return;
+    setError('');
+    setDeletingId(ep.id);
+    try {
+      await deleteR2Object(ep.r2_key);
+      await supabase.from('episodes').update({ r2_key: null, r2_url: null, file_size: 0 }).eq('id', ep.id);
+      setEpisodes((prev) =>
+        prev.map((e) => (e.id === ep.id ? { ...e, r2_key: null, r2_url: null, file_size: 0 } : e)).filter((e) => e.r2_key)
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('r2.errDeleteFailed'));
+    }
+    setDeletingId('');
   };
 
   /** Groups episodes by show (and season, when set), sorted the same way the show library is. */
@@ -373,6 +394,20 @@ export function R2Page() {
                           >
                             <Download className="w-3.5 h-3.5" />
                           </a>
+                        )}
+                        {backendConfigured && ep.r2_key && (
+                          <button
+                            onClick={() => void handleDelete(ep)}
+                            disabled={deletingId === ep.id}
+                            title={t('r2.deleteFile')}
+                            className="p-1.5 rounded-lg hover:bg-error-500/20 text-dark-500 hover:text-error-400 transition-colors disabled:opacity-40"
+                          >
+                            {deletingId === ep.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-3.5 h-3.5" />
+                            )}
+                          </button>
                         )}
                       </div>
                     );

@@ -241,7 +241,6 @@ export type PageKey =
   | 'dashboard'
   | 'groups'
   | 'downloads'
-  | 'automation'
   | 'urllists'
   | 'settings'
   | 'guide'

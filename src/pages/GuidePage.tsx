@@ -5,11 +5,9 @@ import {
   Copy,
   Download,
   ExternalLink,
-  Send,
   Server,
   Terminal,
   Users,
-  Zap,
 } from 'lucide-react';
 
 import { TelegramGlyph } from '@/components/Brand';
@@ -33,8 +31,8 @@ const STEPS: Step[] = [
       km: '១. ចាប់ផ្តើមសេវា userbot',
     },
     body: {
-      en: 'This app is the control panel; the service is what actually talks to Telegram. Without it running, scanning, downloading and forwarding stay idle. Run it on your PC, or on a small VPS if you want it working overnight.',
-      km: 'កម្មវិធីនេះជាផ្ទាំងបញ្ជា ចំណែកសេវាទើបជាអ្នកទាក់ទងជាមួយ Telegram ពិត។ បើវាមិនដំណើរការ ការ scan ទាញយក និងបញ្ជូនបន្តនឹងឈប់ទាំងអស់។ អាច run លើកុំព្យូទ័រ ឬលើ VPS បើចង់ឲ្យវាដើរពេលយប់។',
+      en: 'This app is the control panel; the service is what actually talks to Telegram. Without it running, scanning and downloading stay idle. Run it on your PC, or on a small VPS if you want it working overnight.',
+      km: 'កម្មវិធីនេះជាផ្ទាំងបញ្ជា ចំណែកសេវាទើបជាអ្នកទាក់ទងជាមួយ Telegram ពិត។ បើវាមិនដំណើរការ ការ scan និងទាញយកនឹងឈប់ទាំងអស់។ អាច run លើកុំព្យូទ័រ ឬលើ VPS បើចង់ឲ្យវាដើរពេលយប់។',
     },
     code: 'cd backend-node\nnpm install\nnpm run login\nnpm start',
   },
@@ -87,40 +85,16 @@ const STEPS: Step[] = [
     goTo: { page: 'groups', label: { en: 'Open Groups', km: 'បើកក្រុម' } },
   },
   {
-    icon: <Send className="h-4 w-4" />,
-    title: {
-      en: '6. Forward into another group',
-      km: '៦. បញ្ជូនបន្តទៅក្រុមផ្សេង',
-    },
-    body: {
-      en: 'Select videos and press Forward to group, then paste the destination group ID. The dialog confirms the real group name first. Nothing is re-downloaded — Telegram copies the file server-side. Turn on "Keep forwarding automatically" and new videos follow on their own.',
-      km: 'ជ្រើសវីដេអូ ចុច Forward to group រួចបញ្ចូល ID ក្រុមទិសដៅ។ ផ្ទាំងនឹងបញ្ជាក់ឈ្មោះក្រុមពិតជាមុន។ គ្មានការទាញយកឡើងវិញទេ — Telegram ចម្លងឯកសារនៅលើ server។ បើកមុខងារ "Keep forwarding automatically" នោះវីដេអូថ្មីនឹងតាមទៅដោយស្វ័យប្រវត្តិ។',
-    },
-    goTo: { page: 'automation', label: { en: 'Open Automation', km: 'បើកស្វ័យប្រវត្តិកម្ម' } },
-  },
-  {
     icon: <Copy className="h-4 w-4" />,
     title: {
-      en: '7. Branch a whole group into a new one',
-      km: '៧. បើកសាខាក្រុមទាំងមូលទៅក្រុមថ្មី',
+      en: '6. Branch a whole group into a new one',
+      km: '៦. បើកសាខាក្រុមទាំងមូលទៅក្រុមថ្មី',
     },
     body: {
       en: 'Open a group and press "Mirror to new group". It creates a matching topic in the destination for every topic that holds videos, then copies each video in episode order. If the source group has content protection on — common for paid groups — Telegram blocks forwarding entirely, and the Automatic copy mode downloads and re-uploads each video instead. That is much slower, so leave the service running.',
       km: 'បើកក្រុមមួយ រួចចុច "Mirror to new group"។ វានឹងបង្កើត topic ដូចគ្នាក្នុងក្រុមថ្មីសម្រាប់រាល់ topic ដែលមានវីដេអូ រួចចម្លងវីដេអូតាមលំដាប់ episode។ បើក្រុមប្រភពបើក content protection (ធម្មតាសម្រាប់ក្រុមបង់ប្រាក់) Telegram ហាមការ forward ទាំងស្រុង ហើយរបៀប Automatic នឹងទាញយករួច upload ជាថ្មីជំនួស។ វិធីនោះយឺតជាងច្រើន ដូច្នេះត្រូវទុកសេវាដំណើរការ។',
     },
     goTo: { page: 'groups', label: { en: 'Open Groups', km: 'បើកក្រុម' } },
-  },
-  {
-    icon: <Zap className="h-4 w-4" />,
-    title: {
-      en: '8. Let it run by itself',
-      km: '៨. ទុកឲ្យវាដំណើរការឯង',
-    },
-    body: {
-      en: 'An auto-download rule watches a group or topic for a range of episodes and queues them as they appear. Give the rule a forward group ID and each new episode is relayed there too.',
-      km: 'ច្បាប់ទាញយកស្វ័យប្រវត្តិនឹងឃ្លាំមើលក្រុម ឬ topic តាមចន្លោះ episode ហើយដាក់ចូលជួរពេលវាលេចឡើង។ បើដាក់ ID ក្រុមបញ្ជូនបន្តផងនោះ episode ថ្មីនីមួយៗនឹងផ្ញើទៅទីនោះដែរ។',
-    },
-    goTo: { page: 'automation', label: { en: 'Open Automation', km: 'បើកស្វ័យប្រវត្តិកម្ម' } },
   },
 ];
 
