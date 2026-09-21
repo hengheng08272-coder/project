@@ -196,6 +196,19 @@ export function r2DownloadUrl(key: string, filename?: string): string {
   return `${BACKEND_URL}/api/r2/download?${params.toString()}`;
 }
 
+/**
+ * The equivalent of {@link r2DownloadUrl} for an episode archived to a
+ * Telegram storage channel instead of R2 -- the backend re-fetches it from
+ * Telegram on every call, since there is no static URL for it.
+ */
+export function telegramStorageDownloadUrl(chatId: string, messageId: number, filename?: string): string {
+  if (!BACKEND_URL) return '';
+  const params = new URLSearchParams({ chat_id: chatId, message_id: String(messageId) });
+  if (BACKEND_KEY) params.set('api_key', BACKEND_KEY);
+  if (filename) params.set('filename', filename);
+  return `${BACKEND_URL}/api/telegram-storage/download?${params.toString()}`;
+}
+
 /** Verifies the stored source-S3 credentials really can reach that bucket. */
 export function testS3SourceConnection() {
   return callBackend<R2TestResult>('/api/s3source/test');
