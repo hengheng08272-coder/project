@@ -14,9 +14,10 @@ import { GuidePage } from '@/pages/GuidePage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { SubscribePage } from '@/pages/SubscribePage';
 import { UrlListsPage } from '@/pages/UrlListsPage';
-import { getSubscriptionStatus, type SubscriptionStatusResult } from '@/lib/backend';
+import { getSubscriptionStatus, telegramMiniAppLogin, type SubscriptionStatusResult } from '@/lib/backend';
 import { useLanguage } from '@/lib/i18n';
 import { supabase, supabaseConfigured } from '@/lib/supabase';
+import { isTelegramMiniApp, prepareTelegramMiniApp, telegramInitData } from '@/lib/telegramWebApp';
 import type { PageKey } from '@/lib/types';
 
 // The paywall/tier system is fully built (SubscribePage, AdminPage, capability
@@ -35,11 +36,30 @@ function App() {
   const { t } = useLanguage();
 
   useEffect(() => {
+    prepareTelegramMiniApp();
+  }, []);
+
+  useEffect(() => {
     if (!supabaseConfigured) {
       setSessionLoading(false);
       return;
     }
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(async ({ data }) => {
+      // Opened inside Telegram with no browser session yet -- sign in
+      // silently from the Mini App's own signed init data instead of
+      // showing AuthPage's email/password form at all.
+      if (!data.session && isTelegramMiniApp) {
+        try {
+          const { email, token_hash } = await telegramMiniAppLogin(telegramInitData);
+          const { data: otpData } = await supabase.auth.verifyOtp({ email, token_hash, type: 'magiclink' });
+          setSession(otpData.session ?? null);
+          setSessionLoading(false);
+          return;
+        } catch (err) {
+          console.error('Telegram Mini App sign-in failed:', err);
+          // Falls through to AuthPage -- better than a stuck loading screen.
+        }
+      }
       setSession(data.session);
       setSessionLoading(false);
     });

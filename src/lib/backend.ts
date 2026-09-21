@@ -50,6 +50,11 @@ export function telegramLogin(payload: Record<string, unknown>) {
   return callBackend<TelegramLoginResult>('/api/auth/telegram-login', payload);
 }
 
+/** The Mini App equivalent of {@link telegramLogin}, for the app opened inside Telegram's own WebView. */
+export function telegramMiniAppLogin(initData: string) {
+  return callBackend<TelegramLoginResult>('/api/auth/telegram-miniapp', { init_data: initData });
+}
+
 export interface ResolvedGroupInfo {
   title: string;
   username: string | null;
