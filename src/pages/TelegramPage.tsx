@@ -28,6 +28,7 @@ const EMPTY_SETTINGS: TelegramSettings = {
   connected: false, last_connected_at: null,
   account_first_name: null, account_last_name: null,
   account_username: null, account_user_id: null,
+  storage_chat_id: null,
   created_at: '', updated_at: '',
 };
 
@@ -107,7 +108,8 @@ export function TelegramPage() {
   const isDirty = !!settings && (
     (settings.api_id || '') !== (savedSettings.api_id || '') ||
     (settings.api_hash || '') !== (savedSettings.api_hash || '') ||
-    (settings.phone || '') !== (savedSettings.phone || '')
+    (settings.phone || '') !== (savedSettings.phone || '') ||
+    (settings.storage_chat_id || '') !== (savedSettings.storage_chat_id || '')
   );
 
   const handleSave = async () => {
@@ -119,11 +121,13 @@ export function TelegramPage() {
           api_id: settings.api_id,
           api_hash: settings.api_hash,
           phone: settings.phone,
+          storage_chat_id: settings.storage_chat_id,
         }).eq('id', settings.id)
       : await supabase.from('telegram_settings').insert({
           api_id: settings.api_id,
           api_hash: settings.api_hash,
           phone: settings.phone,
+          storage_chat_id: settings.storage_chat_id,
         }).select().maybeSingle();
 
     if (result.error) {
@@ -304,6 +308,20 @@ export function TelegramPage() {
                 className="w-full bg-dark-800 border border-dark-700 rounded-lg pl-10 pr-3 py-2.5 text-sm text-white placeholder-dark-600 outline-none focus:border-primary-500 transition-colors"
               />
             </div>
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-xs text-dark-400 font-medium block mb-1.5">{t('tg.storageChatId')}</label>
+            <div className="relative">
+              <Send className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
+              <input
+                type="text"
+                value={settings?.storage_chat_id || ''}
+                onChange={(e) => update('storage_chat_id', e.target.value)}
+                placeholder="-1001234567890"
+                className="w-full bg-dark-800 border border-dark-700 rounded-lg pl-10 pr-3 py-2.5 text-sm text-white placeholder-dark-600 outline-none focus:border-primary-500 transition-colors font-mono"
+              />
+            </div>
+            <p className="mt-1.5 text-[10px] text-dark-500">{t('tg.storageChatIdHint')}</p>
           </div>
         </div>
         <div className="flex items-center gap-3 mt-5">

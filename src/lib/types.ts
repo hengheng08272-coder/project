@@ -10,6 +10,8 @@ export interface TelegramSettings {
   account_last_name: string | null;
   account_username: string | null;
   account_user_id: string | null;
+  /** The private channel/group the userbot forwards into for a group set to the "telegram" storage backend. */
+  storage_chat_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -54,6 +56,8 @@ export interface Group {
   total_episodes: number;
   downloaded_episodes: number;
   last_scanned_at: string | null;
+  /** Where future downloads of this group get archived -- R2 (default), or a Telegram storage channel (free, no bandwidth). */
+  storage_backend: 'r2' | 'telegram';
   created_at: string;
   updated_at: string;
 }
@@ -86,6 +90,9 @@ export interface Episode {
   r2_url: string | null;
   media_type: 'video' | 'audio';
   mime_type: string | null;
+  /** Set instead of r2_key/r2_url when this episode was archived to a Telegram storage channel. */
+  tg_storage_chat_id: string | null;
+  tg_storage_message_id: number | null;
   created_at: string;
   updated_at: string;
 }

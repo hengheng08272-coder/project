@@ -25,7 +25,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { backendConfigured, callBackend, r2DownloadUrl } from '@/lib/backend';
+import { backendConfigured, callBackend, r2DownloadUrl, telegramStorageDownloadUrl } from '@/lib/backend';
 import { useLanguage, type TranslationKey } from '@/lib/i18n';
 import type { Episode, Group, Topic } from '@/lib/types';
 import { formatBytes, formatTimeAgo, getStatusColor } from '@/lib/utils';
@@ -56,8 +56,8 @@ function matchesFilter(ep: Episode, filter: EpisodeFilter): boolean {
     case 'downloading': return ep.status === 'downloading';
     case 'completed': return ep.status === 'completed';
     case 'failed': return ep.status === 'failed';
-    case 'in_r2': return Boolean(ep.r2_key);
-    case 'not_in_r2': return !ep.r2_key;
+    case 'in_r2': return Boolean(ep.r2_key || ep.tg_storage_chat_id);
+    case 'not_in_r2': return !ep.r2_key && !ep.tg_storage_chat_id;
   }
 }
 
@@ -231,6 +231,12 @@ export function GroupsPage() {
     loadData();
   };
 
+  /** Switches where future downloads of this group get archived -- R2, or a Telegram storage channel. */
+  const handleSetStorageBackend = async (id: string, backend: 'r2' | 'telegram') => {
+    setGroups((prev) => prev.map((g) => (g.id === id ? { ...g, storage_backend: backend } : g)));
+    await supabase.from('groups').update({ storage_backend: backend }).eq('id', id);
+  };
+
   const queueDownloads = async (eps: Episode[]) => {
     const pending = eps.filter((e) => e.status !== 'completed' && e.status !== 'downloading');
     if (pending.length === 0) {
@@ -338,6 +344,7 @@ export function GroupsPage() {
           onBack={backToGroups}
           onOpenTopic={openTopic}
           onMirror={() => setMirroring(true)}
+          onSetStorageBackend={(backend) => handleSetStorageBackend(selectedGroup.id, backend)}
           onDownloadTopic={(eps) => queueDownloads(eps)}
           onForwardTopic={(topic, eps) =>
             setForwardRequest({ group: selectedGroup, topic, episodes: eps, mode: 'topic' })
@@ -355,7 +362,7 @@ export function GroupsPage() {
           allVisibleSelected={allVisibleSelected}
           onToggleAll={toggleSelectAllVisible}
           onSelectNotDownloaded={() => selectMatching((e) => e.status !== 'completed' && e.status !== 'downloading')}
-          onSelectNotInR2={() => selectMatching((e) => !e.r2_key)}
+          onSelectNotInR2={() => selectMatching((e) => !e.r2_key && !e.tg_storage_chat_id)}
           onClearSelection={() => { setSelectedEpisodes(new Set()); lastToggledId.current = null; }}
           statusFilter={statusFilter}
           onStatusFilter={setStatusFilter}
@@ -457,7 +464,7 @@ function Breadcrumb({ group, topicLabel, onHome, onGroup }: {
  * Content-Disposition: attachment, so it saves to the device even when the
  * bucket has no public URL configured at all.
  */
-function EpisodeUrlBadge({ url, r2Key, fileName }: { url: string | null; r2Key: string; fileName: string | null }) {
+function EpisodeUrlBadge({ url, downloadUrl }: { url: string | null; downloadUrl: string }) {
   const { t } = useLanguage();
   const [copied, setCopied] = useState(false);
   return (
@@ -489,9 +496,9 @@ function EpisodeUrlBadge({ url, r2Key, fileName }: { url: string | null; r2Key: 
           </a>
         </>
       )}
-      {backendConfigured && (
+      {downloadUrl && (
         <a
-          href={r2DownloadUrl(r2Key, fileName ?? undefined)}
+          href={downloadUrl}
           onClick={(e) => e.stopPropagation()}
           title={t('groups.downloadToDevice')}
           className="flex items-center gap-1 rounded-full bg-dark-800 px-1.5 py-0.5 text-dark-400 transition-colors hover:text-white"
@@ -637,7 +644,7 @@ function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; va
   );
 }
 
-function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOpenTopic, onMirror, onDownloadTopic, onForwardTopic }: {
+function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOpenTopic, onMirror, onSetStorageBackend, onDownloadTopic, onForwardTopic }: {
   group: Group;
   topics: Topic[];
   episodesOf: (groupId: string, topicId: string | null) => Episode[];
@@ -646,6 +653,7 @@ function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOp
   onBack: () => void;
   onOpenTopic: (topicId: string) => void;
   onMirror: () => void;
+  onSetStorageBackend: (backend: 'r2' | 'telegram') => void;
   onDownloadTopic: (episodes: Episode[]) => void;
   onForwardTopic: (topic: Topic | null, episodes: Episode[]) => void;
 }) {
@@ -697,6 +705,24 @@ function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOp
               >
                 <CopyIcon className="h-4 w-4" /> {t('groups.mirrorToNewGroup')}
               </button>
+              <div className="flex items-center rounded-lg border border-dark-700 bg-dark-800 p-0.5" title={t('groups.storageBackendTitle')}>
+                <button
+                  onClick={() => onSetStorageBackend('r2')}
+                  className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                    (group.storage_backend ?? 'r2') === 'r2' ? 'bg-primary-500 text-white' : 'text-dark-400 hover:text-white'
+                  }`}
+                >
+                  <Cloud className="h-3.5 w-3.5" /> R2
+                </button>
+                <button
+                  onClick={() => onSetStorageBackend('telegram')}
+                  className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                    group.storage_backend === 'telegram' ? 'bg-primary-500 text-white' : 'text-dark-400 hover:text-white'
+                  }`}
+                >
+                  <Send className="h-3.5 w-3.5" /> Telegram
+                </button>
+              </div>
             </div>
           </div>
 
@@ -766,7 +792,7 @@ function TopicCard({ title, episodes, muted, onOpen, onDownload, onForward }: {
 }) {
   const { t } = useLanguage();
   const done = episodes.filter((e) => e.status === 'completed').length;
-  const inR2 = episodes.filter((e) => e.r2_key).length;
+  const inR2 = episodes.filter((e) => e.r2_key || e.tg_storage_chat_id).length;
   const size = episodes.reduce((sum, e) => sum + (e.file_size || 0), 0);
 
   return (
@@ -1043,7 +1069,20 @@ function EpisodeBrowser({
                     {ep.duration > 0 && <span>{Math.floor(ep.duration / 60)}m</span>}
                     <span className={`rounded-full px-1.5 py-0.5 font-medium ${getStatusColor(ep.status)}`}>{t(`groups.status.${ep.status}` as TranslationKey)}</span>
                     {ep.r2_key && (
-                      <EpisodeUrlBadge url={ep.r2_url} r2Key={ep.r2_key} fileName={ep.file_name} />
+                      <EpisodeUrlBadge
+                        url={ep.r2_url}
+                        downloadUrl={backendConfigured ? r2DownloadUrl(ep.r2_key, ep.file_name ?? undefined) : ''}
+                      />
+                    )}
+                    {!ep.r2_key && ep.tg_storage_chat_id && ep.tg_storage_message_id && (
+                      <EpisodeUrlBadge
+                        url={null}
+                        downloadUrl={
+                          backendConfigured
+                            ? telegramStorageDownloadUrl(ep.tg_storage_chat_id, ep.tg_storage_message_id, ep.file_name ?? undefined)
+                            : ''
+                        }
+                      />
                     )}
                   </div>
                 </div>
