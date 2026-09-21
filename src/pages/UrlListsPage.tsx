@@ -85,13 +85,14 @@ export function UrlListsPage() {
     loadData();
   };
 
-  const addItem = async (url: string, label: string, epNumber: string) => {
+  const addItem = async (url: string, label: string, epNumber: string, referer: string) => {
     if (!selectedList || !url) return;
     await supabase.from('url_list_items').insert({
       url_list_id: selectedList,
       url,
       label: label || null,
       episode_number: epNumber ? parseInt(epNumber) : null,
+      referer: referer || null,
     });
     setShowAddItem(false);
     loadData();
@@ -378,7 +379,7 @@ export function UrlListsPage() {
                             <p className="text-[10px] text-dark-500 truncate font-mono">{item.url}</p>
                           )}
                           {item.status === 'failed' && item.error && (
-                            <p className="text-[10px] text-error-400 truncate">{item.error}</p>
+                            <p className="text-[10px] text-error-400 truncate" title={item.error}>{item.error}</p>
                           )}
                         </div>
                         {item.file_size ? (
@@ -734,20 +735,22 @@ function AddListModal({ onClose, onAdd }: { onClose: () => void; onAdd: (title: 
   );
 }
 
-function AddItemModal({ onClose, onAdd }: { onClose: () => void; onAdd: (url: string, label: string, epNumber: string) => void }) {
+function AddItemModal({ onClose, onAdd }: { onClose: () => void; onAdd: (url: string, label: string, epNumber: string, referer: string) => void }) {
   const [url, setUrl] = useState('');
   const [label, setLabel] = useState('');
   const [epNumber, setEpNumber] = useState('');
+  const [referer, setReferer] = useState('');
+  const isM3u8 = /\.m3u8(\?|$)/i.test(url);
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl border border-dark-700 bg-dark-900 p-6 animate-slide-up" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-lg font-bold text-white mb-1">Add URL</h3>
         <p className="text-xs text-dark-500 mb-5">Add a single episode URL to this list</p>
-        <form onSubmit={(e) => { e.preventDefault(); if (url) onAdd(url, label, epNumber); }} className="space-y-4">
+        <form onSubmit={(e) => { e.preventDefault(); if (url) onAdd(url, label, epNumber, referer); }} className="space-y-4">
           <div>
             <label className="text-xs text-dark-400 font-medium block mb-1.5">URL *</label>
-            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://t.me/group/123"
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://t.me/group/123 or https://cdn.example.com/video.m3u8"
               className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-dark-600 outline-none focus:border-primary-500 transition-colors font-mono" />
           </div>
           <div>
@@ -759,6 +762,18 @@ function AddItemModal({ onClose, onAdd }: { onClose: () => void; onAdd: (url: st
             <label className="text-xs text-dark-400 font-medium block mb-1.5">Episode Number</label>
             <input type="number" value={epNumber} onChange={(e) => setEpNumber(e.target.value)} placeholder="1"
               className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-dark-600 outline-none focus:border-primary-500 transition-colors" />
+          </div>
+          <div>
+            <label className="text-xs text-dark-400 font-medium block mb-1.5">
+              Referer {isM3u8 ? '(recommended for .m3u8)' : '(optional)'}
+            </label>
+            <input value={referer} onChange={(e) => setReferer(e.target.value)} placeholder="https://the-site-you-watched-it-on.com/watch/123"
+              className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-dark-600 outline-none focus:border-primary-500 transition-colors font-mono" />
+            {isM3u8 && (
+              <p className="mt-1.5 text-[10px] text-dark-500">
+                An .m3u8 stream often needs the page you watched it on as a Referer, or the CDN answers 403.
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 rounded-lg bg-dark-800 hover:bg-dark-700 text-dark-300 text-sm font-medium transition-colors">Cancel</button>

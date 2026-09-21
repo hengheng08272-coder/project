@@ -130,6 +130,8 @@ export interface UrlListItem {
   url: string;
   label: string | null;
   episode_number: number | null;
+  /** Sent as the Referer header for a .m3u8 source that needs one to avoid a 403; ignored for a plain file URL. */
+  referer: string | null;
   status: 'pending' | 'queued' | 'downloading' | 'completed' | 'failed';
   r2_key: string | null;
   r2_url: string | null;
