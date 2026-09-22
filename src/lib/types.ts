@@ -58,6 +58,8 @@ export interface Group {
   last_scanned_at: string | null;
   /** Where future downloads of this group get archived -- R2 (default), or a Telegram storage channel (free, no bandwidth). */
   storage_backend: 'r2' | 'telegram';
+  /** When true, the worker re-scans this group on its own every AUTO_RESCAN_MINUTES, so new episodes show up without a manual "Scan" click. */
+  auto_rescan: boolean;
   created_at: string;
   updated_at: string;
 }

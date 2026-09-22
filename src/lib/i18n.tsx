@@ -331,6 +331,9 @@ const en = {
   'groups.manualBadge': 'From URL / upload',
   'groups.manualDetailHint': "This isn't a Telegram group, so there's nothing to scan, mirror, or forward -- add more videos to it from the URL Lists page.",
   'groups.added': 'Added {time}',
+  'groups.autoRescanTitle': 'Automatically re-scan this group every so often, so new episodes show up without clicking Scan yourself',
+  'groups.autoRescanOn': 'Auto-rescan: on',
+  'groups.autoRescanOff': 'Auto-rescan: off',
 
   'addGroup.title': 'Add Telegram Group',
   'addGroup.subtitle': 'Pick one of your groups, or paste a chat ID or invite link',
@@ -701,6 +704,9 @@ const km: Record<TranslationKey, string> = {
   'groups.manualBadge': 'មកពី URL / Upload',
   'groups.manualDetailHint': 'នេះមិនមែនជាក្រុម Telegram ទេ ដូច្នេះគ្មានអ្វីត្រូវ scan, mirror ឬ forward ទេ — បន្ថែមវីដេអូពីទំព័រ URL Lists វិញ។',
   'groups.added': 'បន្ថែមកាលពី {time}',
+  'groups.autoRescanTitle': 'ស្កេនក្រុមនេះម្តងទៀតដោយស្វ័យប្រវត្តិម្តងម្កាល ដើម្បីអោយ episode ថ្មីលេចឡើងដោយមិនចាំបាច់ចុច Scan ដោយខ្លួនឯង',
+  'groups.autoRescanOn': 'Auto-rescan: បើក',
+  'groups.autoRescanOff': 'Auto-rescan: បិទ',
 
   'addGroup.title': 'បន្ថែមក្រុម Telegram',
   'addGroup.subtitle': 'ជ្រើសរើសក្រុមរបស់អ្នក ឬបិទភ្ជាប់ chat ID ឬ invite link',

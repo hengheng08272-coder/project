@@ -251,6 +251,12 @@ export function GroupsPage() {
     await supabase.from('groups').update({ storage_backend: backend }).eq('id', id);
   };
 
+  /** Toggles the worker's periodic re-scan of this group, so new episodes show up without a manual "Scan" click. */
+  const handleToggleAutoRescan = async (id: string, next: boolean) => {
+    setGroups((prev) => prev.map((g) => (g.id === id ? { ...g, auto_rescan: next } : g)));
+    await supabase.from('groups').update({ auto_rescan: next }).eq('id', id);
+  };
+
   const queueDownloads = async (eps: Episode[]) => {
     const pending = eps.filter((e) => e.status !== 'completed' && e.status !== 'downloading');
     if (pending.length === 0) {
@@ -359,6 +365,7 @@ export function GroupsPage() {
           onOpenTopic={openTopic}
           onMirror={() => setMirroring(true)}
           onSetStorageBackend={(backend) => handleSetStorageBackend(selectedGroup.id, backend)}
+          onToggleAutoRescan={() => handleToggleAutoRescan(selectedGroup.id, !selectedGroup.auto_rescan)}
           onDownloadTopic={(eps) => queueDownloads(eps)}
           onForwardTopic={(topic, eps) =>
             setForwardRequest({ group: selectedGroup, topic, episodes: eps, mode: 'topic' })
@@ -720,7 +727,7 @@ function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; va
   );
 }
 
-function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOpenTopic, onMirror, onSetStorageBackend, onDownloadTopic, onForwardTopic }: {
+function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOpenTopic, onMirror, onSetStorageBackend, onToggleAutoRescan, onDownloadTopic, onForwardTopic }: {
   group: Group;
   topics: Topic[];
   episodesOf: (groupId: string, topicId: string | null) => Episode[];
@@ -730,6 +737,7 @@ function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOp
   onOpenTopic: (topicId: string) => void;
   onMirror: () => void;
   onSetStorageBackend: (backend: 'r2' | 'telegram') => void;
+  onToggleAutoRescan: () => void;
   onDownloadTopic: (episodes: Episode[]) => void;
   onForwardTopic: (topic: Topic | null, episodes: Episode[]) => void;
 }) {
@@ -805,6 +813,18 @@ function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOp
                     <Send className="h-3.5 w-3.5" /> Telegram
                   </button>
                 </div>
+                <button
+                  onClick={onToggleAutoRescan}
+                  title={t('groups.autoRescanTitle')}
+                  className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                    group.auto_rescan
+                      ? 'bg-success-500/15 text-success-400 hover:bg-success-500/25'
+                      : 'bg-dark-800 text-dark-300 hover:bg-dark-700'
+                  }`}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  {group.auto_rescan ? t('groups.autoRescanOn') : t('groups.autoRescanOff')}
+                </button>
               </div>
             )}
           </div>
