@@ -23,9 +23,10 @@ import {
   PlayCircle,
   ShieldCheck,
   ShieldAlert,
+  Wand2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { backendConfigured, checkUrl, r2DownloadUrl, saveUrlItemsToR2, saveUrlListToR2 } from '@/lib/backend';
+import { backendConfigured, checkUrl, r2DownloadUrl, resolvePageUrl, saveUrlItemsToR2, saveUrlListToR2 } from '@/lib/backend';
 import type { UrlList, UrlListItem } from '@/lib/types';
 import { formatBytes, getStatusColor } from '@/lib/utils';
 import { parseUrls, getSourceColor, type ParsedUrlItem } from '@/lib/urlParser';
@@ -823,7 +824,10 @@ function AddItemModal({ onClose, onAdd }: { onClose: () => void; onAdd: (url: st
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState<'ok' | 'bad' | null>(null);
   const [checkError, setCheckError] = useState('');
+  const [resolving, setResolving] = useState(false);
+  const [resolveError, setResolveError] = useState('');
   const isM3u8 = /\.m3u8(\?|$)/i.test(url);
+  const isDirectFile = /\.(mp4|mkv|webm|mov|avi|flv|ts|m4v|mp3|m4a|wav|flac|aac|ogg|m3u8)(\?|$)/i.test(url);
 
   const runCheck = async () => {
     if (!url || !backendConfigured) return;
@@ -838,6 +842,28 @@ function AddItemModal({ onClose, onAdd }: { onClose: () => void; onAdd: (url: st
       setCheckError(err instanceof Error ? err.message : 'Could not reach that URL.');
     }
     setChecking(false);
+  };
+
+  /**
+   * Finds the real .m3u8/media link behind a "watch this episode" page --
+   * the same link someone would otherwise dig out of DevTools' Network tab
+   * by hand -- and swaps the URL field to it, with the page itself filled
+   * in as the Referer (the CDN usually needs it) and the title as a label.
+   */
+  const runResolve = async () => {
+    if (!url || !backendConfigured) return;
+    setResolving(true);
+    setResolveError('');
+    setCheckResult(null);
+    try {
+      const result = await resolvePageUrl(url);
+      setUrl(result.url);
+      setReferer(result.referer);
+      if (result.title && !label) setLabel(result.title);
+    } catch (err) {
+      setResolveError(err instanceof Error ? err.message : 'Could not find a video on that page.');
+    }
+    setResolving(false);
   };
 
   return (
@@ -875,6 +901,29 @@ function AddItemModal({ onClose, onAdd }: { onClose: () => void; onAdd: (url: st
               <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-error-400">
                 <ShieldAlert className="w-3.5 h-3.5" /> {checkError}
               </p>
+            )}
+            {!isDirectFile && url && (
+              <div className="mt-2 rounded-lg border border-dashed border-primary-500/30 bg-primary-500/5 p-2.5">
+                <button
+                  type="button"
+                  onClick={runResolve}
+                  disabled={resolving || !backendConfigured}
+                  title="Have the server find the real video link on this page, the way DevTools' Network tab would show it"
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary-500/15 hover:bg-primary-500/25 px-3 py-2 text-xs font-medium text-primary-300 transition-colors disabled:opacity-40"
+                >
+                  {resolving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                  Find the video link on this page
+                </button>
+                <p className="mt-1.5 text-[10px] text-dark-500">
+                  This looks like a normal webpage, not a direct video link. Click above to have the
+                  server find the .m3u8/video URL automatically -- no need to open DevTools yourself.
+                </p>
+                {resolveError && (
+                  <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-error-400">
+                    <ShieldAlert className="w-3.5 h-3.5 shrink-0" /> {resolveError}
+                  </p>
+                )}
+              </div>
             )}
           </div>
           <div>

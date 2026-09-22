@@ -292,6 +292,22 @@ export function checkUrl(url: string) {
   return callBackend<{ success: boolean }>('/api/urls/check', { url });
 }
 
+export interface ResolvedPageUrl {
+  title: string | null;
+  url: string;
+  referer: string;
+}
+
+/**
+ * Resolves an ordinary "watch this episode" webpage to the raw .m3u8/media
+ * URL actually playing on it, via yt-dlp -- the same link someone would
+ * otherwise have to find by hand in the browser's DevTools Network tab.
+ * Nothing is downloaded; this only extracts the URL.
+ */
+export function resolvePageUrl(url: string, referer?: string) {
+  return callBackend<ResolvedPageUrl>('/api/urls/resolve', { url, referer: referer || '' });
+}
+
 export interface BackendHealth {
   telegram: boolean;
   r2: boolean;
