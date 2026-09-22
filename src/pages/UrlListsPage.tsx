@@ -53,6 +53,9 @@ export function UrlListsPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [previewItem, setPreviewItem] = useState<UrlListItem | null>(null);
+  const [quickUrl, setQuickUrl] = useState('');
+  const [quickAdding, setQuickAdding] = useState(false);
+  const [quickStatus, setQuickStatus] = useState('');
 
   const loadData = useCallback(async () => {
     const [lRes, iRes] = await Promise.all([
@@ -103,6 +106,43 @@ export function UrlListsPage() {
     });
     setShowAddItem(false);
     loadData();
+  };
+
+  /**
+   * The one-box, always-visible way to add a link: paste anything (a plain
+   * webpage or a direct file) and press Enter. A page link is auto-resolved
+   * to its real video URL first (same as the "Find the video link" button in
+   * the Add URL modal); a direct file link is added as typed. Resolving
+   * never blocks adding -- if it fails, the pasted link is saved as-is so
+   * yt-dlp can still try it at download time.
+   */
+  const quickAdd = async () => {
+    const url = quickUrl.trim();
+    if (!url || !selectedList || quickAdding) return;
+    setQuickAdding(true);
+    setQuickStatus('');
+
+    let finalUrl = url;
+    let referer = '';
+    let label = '';
+    const looksLikeDirectFile = /\.(mp4|mkv|webm|mov|avi|flv|ts|m4v|mp3|m4a|wav|flac|aac|ogg|m3u8)(\?|$)/i.test(url);
+
+    if (backendConfigured && !looksLikeDirectFile) {
+      setQuickStatus('Looking for the video link on that page…');
+      try {
+        const result = await resolvePageUrl(url);
+        finalUrl = result.url;
+        referer = result.referer;
+        label = result.title || '';
+      } catch {
+        // Fall back to the raw pasted link -- still worth a try at download time.
+      }
+    }
+
+    await addItem(finalUrl, label, '', referer);
+    setQuickUrl('');
+    setQuickStatus('');
+    setQuickAdding(false);
   };
 
   const importUrls = async (parsed: ParsedUrlItem[]) => {
@@ -335,6 +375,33 @@ export function UrlListsPage() {
                   </button>
                 </div>
               </div>
+
+              {/* Quick add -- the main, always-visible way to add a link: paste and
+                  press Enter. No modal needed for the common case. */}
+              <div className="mb-3 flex items-center gap-2 rounded-xl border border-dark-700 bg-dark-800/40 p-2">
+                <Wand2 className="w-4 h-4 shrink-0 text-primary-400 ml-1" />
+                <input
+                  value={quickUrl}
+                  onChange={(e) => setQuickUrl(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') quickAdd(); }}
+                  placeholder="Paste any link here (a webpage or a direct video/m3u8 link) and press Enter…"
+                  disabled={quickAdding}
+                  className="flex-1 min-w-0 bg-transparent text-sm text-white placeholder-dark-500 outline-none disabled:opacity-60"
+                />
+                <button
+                  onClick={quickAdd}
+                  disabled={!quickUrl.trim() || quickAdding}
+                  className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium transition-colors disabled:opacity-40"
+                >
+                  {quickAdding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                  Add
+                </button>
+              </div>
+              {quickStatus && (
+                <p className="mb-3 -mt-1.5 flex items-center gap-1.5 text-[11px] text-primary-300">
+                  <Loader2 className="w-3 h-3 animate-spin" /> {quickStatus}
+                </p>
+              )}
 
               {/* Quick stats */}
               {listItems.length > 0 && (
