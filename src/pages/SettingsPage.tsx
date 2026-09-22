@@ -13,7 +13,7 @@ import { ACCENTS, useTheme } from '@/lib/theme';
 import { useLanguage } from '@/lib/i18n';
 import type { Capability } from '@/lib/types';
 
-type SettingsTab = 'telegram' | 'r2' | 's3source' | 'downloads' | 'appearance';
+export type SettingsTab = 'telegram' | 'r2' | 's3source' | 'downloads' | 'appearance';
 
 /**
  * Telegram, R2 and download preferences used to be three sidebar entries that
@@ -23,10 +23,14 @@ type SettingsTab = 'telegram' | 'r2' | 's3source' | 'downloads' | 'appearance';
  * connecting your own Telegram account and your own storage (R2/S3 source)
  * is Pro-only -- a Basic subscriber uses the app's shared userbot and shared
  * storage transparently, with nothing of their own to configure there.
+ *
+ * `initialTab` lets a caller (the Dashboard's connection chips) deep-link
+ * straight to the tab for the account it's about, instead of always
+ * landing on Telegram and making the person click again to find R2.
  */
-export function SettingsPage({ capability }: { capability: Capability }) {
+export function SettingsPage({ capability, initialTab }: { capability: Capability; initialTab?: SettingsTab }) {
   const { t } = useLanguage();
-  const [tab, setTab] = useState<SettingsTab>('telegram');
+  const [tab, setTab] = useState<SettingsTab>(initialTab ?? 'telegram');
 
   return (
     <div className="space-y-4">

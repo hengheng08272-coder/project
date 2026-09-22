@@ -19,6 +19,7 @@ import { AppLogo, TelegramGlyph } from '@/components/Brand';
 import { supabase } from '@/lib/supabase';
 import { useConnectionStatus } from '@/lib/hooks';
 import { backendConfigured } from '@/lib/backend';
+import type { SettingsTab } from '@/pages/SettingsPage';
 import type { Download, Episode, Group, PageKey, TelegramSettings, Topic } from '@/lib/types';
 import { formatBytes, formatTimeAgo, getStatusColor } from '@/lib/utils';
 
@@ -34,7 +35,13 @@ interface Stats {
   storage: number;
 }
 
-export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => void }) {
+export function DashboardPage({
+  onNavigate,
+  onNavigateSettings,
+}: {
+  onNavigate: (page: PageKey) => void;
+  onNavigateSettings: (tab: SettingsTab) => void;
+}) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [activity, setActivity] = useState<ActivityPoint[]>([]);
   const [recent, setRecent] = useState<(Download & { episode?: Episode })[]>([]);
@@ -127,13 +134,13 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => v
               label="Telegram"
               ok={status.telegram}
               icon={<TelegramGlyph className="h-3 w-3" />}
-              onClick={() => onNavigate('settings')}
+              onClick={() => onNavigateSettings('telegram')}
             />
             <StatusChip
               label="R2"
               ok={status.r2}
               icon={<Cloud className="h-3 w-3" />}
-              onClick={() => onNavigate('settings')}
+              onClick={() => onNavigateSettings('r2')}
             />
             <StatusChip
               label="Service"
@@ -183,7 +190,7 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => v
           value={stats ? formatBytes(stats.storage) : undefined}
           sub={stats?.failed ? `${stats.failed} failed downloads` : 'no failures'}
           tone={stats?.failed ? 'warning' : 'muted'}
-          onClick={() => onNavigate('settings')}
+          onClick={() => onNavigateSettings('r2')}
         />
       </section>
 

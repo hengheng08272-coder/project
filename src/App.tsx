@@ -11,7 +11,7 @@ import { DashboardPage } from '@/pages/DashboardPage';
 import { DownloadsPage } from '@/pages/DownloadsPage';
 import { GroupsPage } from '@/pages/GroupsPage';
 import { GuidePage } from '@/pages/GuidePage';
-import { SettingsPage } from '@/pages/SettingsPage';
+import { SettingsPage, type SettingsTab } from '@/pages/SettingsPage';
 import { SubscribePage } from '@/pages/SubscribePage';
 import { UrlListsPage } from '@/pages/UrlListsPage';
 import { getSubscriptionStatus, telegramMiniAppLogin, type SubscriptionStatusResult } from '@/lib/backend';
@@ -27,6 +27,13 @@ const SUBSCRIPTION_ENFORCED = false;
 
 function App() {
   const [currentPage, setCurrentPage] = useState<PageKey>('dashboard');
+  // Set right before navigating to 'settings' so a Dashboard connection chip
+  // (e.g. "R2") lands on that account's own tab instead of always Telegram.
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
+  const goToSettings = (tab: SettingsTab) => {
+    setSettingsTab(tab);
+    setCurrentPage('settings');
+  };
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
@@ -133,7 +140,7 @@ function App() {
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
-        return <DashboardPage onNavigate={setCurrentPage} />;
+        return <DashboardPage onNavigate={setCurrentPage} onNavigateSettings={goToSettings} />;
       case 'groups':
         return <GroupsPage />;
       case 'downloads':
@@ -144,6 +151,7 @@ function App() {
         return (
           <SettingsPage
             capability={SUBSCRIPTION_ENFORCED ? subStatus?.capability ?? (isAdmin ? 'pro' : 'basic') : 'pro'}
+            initialTab={settingsTab}
           />
         );
       case 'guide':
