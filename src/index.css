@@ -193,6 +193,32 @@ html.accent-amber {
   --c-accent-900: 124 45 18;
 }
 
+/* Sky (Telegram blue) */
+html.accent-sky {
+  --c-primary-50: 234 246 253;
+  --c-primary-100: 209 236 250;
+  --c-primary-200: 163 217 245;
+  --c-primary-300: 111 195 238;
+  --c-primary-400: 66 176 231;
+  --c-primary-500: 34 158 217;
+  --c-primary-600: 24 133 187;
+  --c-primary-700: 20 106 150;
+  --c-primary-800: 20 83 116;
+  --c-primary-900: 19 68 94;
+  --c-primary-950: 12 42 60;
+
+  --c-accent-50: 240 249 255;
+  --c-accent-100: 224 242 254;
+  --c-accent-200: 186 230 253;
+  --c-accent-300: 125 211 252;
+  --c-accent-400: 56 189 248;
+  --c-accent-500: 14 165 233;
+  --c-accent-600: 2 132 199;
+  --c-accent-700: 3 105 161;
+  --c-accent-800: 7 89 133;
+  --c-accent-900: 12 74 110;
+}
+
 /* ---- Light-theme contrast corrections for coloured text ---- */
 html.theme-light {
   --c-success-400: 21 128 61;
@@ -231,6 +257,13 @@ html.theme-light.accent-amber {
   --c-primary-300: 146 64 14;
   --c-accent-400: 194 65 12;
   --c-accent-300: 154 52 18;
+}
+
+html.theme-light.accent-sky {
+  --c-primary-400: 24 133 187;
+  --c-primary-300: 20 106 150;
+  --c-accent-400: 2 132 199;
+  --c-accent-300: 3 105 161;
 }
 
 @layer base {

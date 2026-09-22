@@ -61,7 +61,7 @@ export function ThemeSwitcher({ variant = 'menu' }: { variant?: 'menu' | 'inline
         <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-dark-500">
           {t('theme.accent')}
         </p>
-        <div className="grid grid-cols-4 gap-1.5">
+        <div className="grid grid-cols-5 gap-1.5">
           {ACCENTS.map((option) => (
             <button
               key={option.key}

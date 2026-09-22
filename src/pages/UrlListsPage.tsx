@@ -14,6 +14,10 @@ import {
   FileText,
   Send,
   Youtube,
+  Facebook,
+  Instagram,
+  Twitter,
+  Twitch,
   AlertTriangle,
   Loader2,
   Cloud,
@@ -29,7 +33,45 @@ import { supabase } from '@/lib/supabase';
 import { backendConfigured, checkUrl, r2DownloadUrl, resolvePageUrl, saveUrlItemsToR2, saveUrlListToR2 } from '@/lib/backend';
 import type { UrlList, UrlListItem } from '@/lib/types';
 import { formatBytes, getStatusColor } from '@/lib/utils';
-import { parseUrls, getSourceColor, type ParsedUrlItem } from '@/lib/urlParser';
+import { parseUrls, getSourceColor, isDirectFileUrl, type ParsedUrlItem } from '@/lib/urlParser';
+
+/**
+ * Shown near every "paste a link" entry point so it's visible at a glance
+ * that this isn't limited to Telegram or a handful of sites -- yt-dlp's
+ * generic extractor (pageResolve.js / ytdlp.js on the backend) resolves and
+ * downloads from any of these plus ~1800 other sites, direct .mp4/.m3u8
+ * links included.
+ */
+function SupportedSourcesBadge() {
+  const platforms: { icon: typeof Youtube; label: string; color: string }[] = [
+    { icon: Youtube, label: 'YouTube', color: 'text-error-400' },
+    { icon: Facebook, label: 'Facebook', color: 'text-primary-400' },
+    { icon: Instagram, label: 'Instagram', color: 'text-accent-400' },
+    { icon: Twitter, label: 'Twitter / X', color: 'text-dark-200' },
+    { icon: Twitch, label: 'Twitch', color: 'text-accent-500' },
+    { icon: Send, label: 'Telegram', color: 'text-accent-400' },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {platforms.map(({ icon: Icon, label, color }) => (
+        <span
+          key={label}
+          title={label}
+          className="flex h-6 w-6 items-center justify-center rounded-md border border-dark-700 bg-dark-800/60"
+        >
+          <Icon className={`h-3.5 w-3.5 ${color}`} />
+        </span>
+      ))}
+      <span
+        title="TikTok"
+        className="flex h-6 items-center justify-center rounded-md border border-dark-700 bg-dark-800/60 px-1.5 text-[9px] font-bold text-dark-200"
+      >
+        TikTok
+      </span>
+      <span className="ml-1 text-[10px] font-medium text-dark-500">+ ~1800 sites, or any direct .mp4/.m3u8 link</span>
+    </div>
+  );
+}
 
 const COLORS = [
   { name: 'blue', class: 'from-primary-500 to-primary-600', text: 'text-primary-400', bg: 'bg-primary-500/10' },
@@ -152,6 +194,7 @@ export function UrlListsPage() {
       url: p.url,
       label: p.label,
       episode_number: p.episode_number,
+      referer: p.referer || null,
     }));
     const { error } = await supabase.from('url_list_items').insert(rows);
     if (error) {
@@ -242,9 +285,10 @@ export function UrlListsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-bold text-white flex items-center gap-2">
-            <Link2 className="w-5 h-5 text-primary-400" /> URL Lists
+            <Link2 className="w-5 h-5 text-primary-400" /> URL / MP4 / M3U8 Downloader
           </h2>
-          <p className="text-xs text-dark-500">Organize episode URLs into lists for batch downloading</p>
+          <p className="text-xs text-dark-500 mb-2">Organize episode URLs into lists for batch downloading</p>
+          <SupportedSourcesBadge />
         </div>
         <button
           onClick={() => setShowAddModal(true)}
@@ -629,7 +673,9 @@ function AutoImportModal({
 }) {
   const [text, setText] = useState('');
   const [skipDuplicates, setSkipDuplicates] = useState(true);
+  const [autoDetect, setAutoDetect] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [resolveProgress, setResolveProgress] = useState<{ done: number; total: number } | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
   const parsed = useMemo(() => {
@@ -657,10 +703,39 @@ function AutoImportModal({
     if (file) await handleFileRead(file);
   };
 
+  /**
+   * Same auto-resolve as the single-link quick-add box, applied to every
+   * page link in the batch (a Telegram/YouTube/direct-file link is left as
+   * typed). Run one at a time -- yt-dlp spawns a subprocess per link, and a
+   * hundred of those at once would just fight each other for CPU.
+   */
   const handleImport = async () => {
     if (parsed.length === 0) return;
     setImporting(true);
-    await onImport(parsed);
+
+    let toImport = parsed;
+    if (autoDetect && backendConfigured) {
+      const needsResolve = parsed.filter((p) => !p.duplicate && !isDirectFileUrl(p.url));
+      if (needsResolve.length > 0) {
+        setResolveProgress({ done: 0, total: needsResolve.length });
+        const resolved = new Map<string, ParsedUrlItem>();
+        let done = 0;
+        for (const item of needsResolve) {
+          try {
+            const result = await resolvePageUrl(item.url);
+            resolved.set(item.url, { ...item, url: result.url, label: item.label || result.title || item.label, referer: result.referer });
+          } catch {
+            // Leave it as pasted -- yt-dlp gets another shot at it when this item is actually downloaded.
+          }
+          done += 1;
+          setResolveProgress({ done, total: needsResolve.length });
+        }
+        toImport = parsed.map((p) => resolved.get(p.url) ?? p);
+      }
+    }
+
+    await onImport(toImport);
+    setResolveProgress(null);
     setImporting(false);
   };
 
@@ -727,6 +802,18 @@ function AutoImportModal({
               <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${skipDuplicates ? 'translate-x-5' : 'translate-x-0.5'}`} />
             </button>
             <span className="text-xs text-dark-300">Skip duplicates</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <button
+              type="button"
+              onClick={() => setAutoDetect(!autoDetect)}
+              className={`w-10 h-6 rounded-full transition-colors relative ${autoDetect ? 'bg-primary-500' : 'bg-dark-700'}`}
+            >
+              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${autoDetect ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            </button>
+            <span className="text-xs text-dark-300" title="Runs each webpage link through yt-dlp first to grab its real video/m3u8 URL and title.">
+              Auto-detect video link
+            </span>
           </label>
           {duplicates.length > 0 && (
             <span className="text-xs text-warning-400 flex items-center gap-1">
@@ -819,7 +906,11 @@ function AutoImportModal({
         {/* Actions */}
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs text-dark-600">
-            {parsed.length > 0 ? `${parsed.length} URLs will be imported` : 'Paste text to start parsing'}
+            {resolveProgress
+              ? `Detecting video links… ${resolveProgress.done}/${resolveProgress.total}`
+              : parsed.length > 0
+              ? `${parsed.length} URLs will be imported`
+              : 'Paste text to start parsing'}
           </p>
           <div className="flex items-center gap-3">
             <button
