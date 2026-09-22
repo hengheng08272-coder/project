@@ -282,6 +282,16 @@ export function saveUrlItemsToR2(itemIds: string[]) {
   return callBackend<{ queued: number }>('/api/urls/items/save', { item_ids: itemIds });
 }
 
+/**
+ * Checks a URL is a public, fetchable address before it's added to a list --
+ * the same check the service itself runs before ever touching a saved URL,
+ * just surfaced early so a typo or a dead link shows up immediately instead
+ * of only after "Save to R2" fails.
+ */
+export function checkUrl(url: string) {
+  return callBackend<{ success: boolean }>('/api/urls/check', { url });
+}
+
 export interface BackendHealth {
   telegram: boolean;
   r2: boolean;

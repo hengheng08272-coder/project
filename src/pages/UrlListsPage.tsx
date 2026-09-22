@@ -18,9 +18,14 @@ import {
   Loader2,
   Cloud,
   CloudUpload,
+  RefreshCw,
+  Download,
+  PlayCircle,
+  ShieldCheck,
+  ShieldAlert,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { backendConfigured, saveUrlItemsToR2, saveUrlListToR2 } from '@/lib/backend';
+import { backendConfigured, checkUrl, r2DownloadUrl, saveUrlItemsToR2, saveUrlListToR2 } from '@/lib/backend';
 import type { UrlList, UrlListItem } from '@/lib/types';
 import { formatBytes, getStatusColor } from '@/lib/utils';
 import { parseUrls, getSourceColor, type ParsedUrlItem } from '@/lib/urlParser';
@@ -46,6 +51,7 @@ export function UrlListsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [previewItem, setPreviewItem] = useState<UrlListItem | null>(null);
 
   const loadData = useCallback(async () => {
     const [lRes, iRes] = await Promise.all([
@@ -185,6 +191,7 @@ export function UrlListsPage() {
   const currentColor = COLORS.find((c) => c.name === currentList?.color) || COLORS[0];
   const listItems = items.filter((i) => i.url_list_id === selectedList);
   const savableCount = listItems.filter((i) => !i.r2_key && i.status !== 'downloading').length;
+  const failedItems = listItems.filter((i) => i.status === 'failed');
   const inR2 = listItems.filter((i) => i.r2_key);
   const savedBytes = inR2.reduce((sum, i) => sum + (i.file_size || 0), 0);
   const existingUrls = useMemo(() => new Set(listItems.map((i) => i.url)), [listItems]);
@@ -302,6 +309,17 @@ export function UrlListsPage() {
                     {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CloudUpload className="w-3.5 h-3.5" />}
                     Save all to R2{savableCount > 0 ? ` (${savableCount})` : ''}
                   </button>
+                  {failedItems.length > 0 && (
+                    <button
+                      onClick={() => saveItemsToR2(failedItems.map((i) => i.id))}
+                      disabled={saving}
+                      title="Give every failed URL another try"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-error-500/15 hover:bg-error-500/25 text-error-300 text-xs font-medium transition-colors disabled:opacity-40"
+                    >
+                      {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                      Retry failed ({failedItems.length})
+                    </button>
+                  )}
                   <button
                     onClick={() => setShowAutoImport(true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-primary-500 to-accent-500 hover:from-primary-600 hover:to-accent-600 text-white text-xs font-medium transition-all glow"
@@ -379,7 +397,7 @@ export function UrlListsPage() {
                             <p className="text-[10px] text-dark-500 truncate font-mono">{item.url}</p>
                           )}
                           {item.status === 'failed' && item.error && (
-                            <p className="text-[10px] text-error-400 truncate" title={item.error}>{item.error}</p>
+                            <p className="text-[10px] text-error-400 break-words" title={item.error}>{item.error}</p>
                           )}
                         </div>
                         {item.file_size ? (
@@ -389,6 +407,15 @@ export function UrlListsPage() {
                           {(item.status === 'downloading' || item.status === 'queued') && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
                           {item.status === 'downloading' ? 'saving' : item.status}
                         </span>
+                        {item.status === 'completed' && isPreviewable(item.r2_url) && (
+                          <button
+                            onClick={() => setPreviewItem(item)}
+                            title="Preview the downloaded file"
+                            className="p-1.5 rounded-lg hover:bg-dark-700 text-dark-500 hover:text-white transition-colors shrink-0"
+                          >
+                            <PlayCircle className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <button
                           onClick={() => copyUrl(item.r2_url || item.url, item.id)}
                           title={item.r2_url ? 'Copy the R2 URL' : 'Copy the source URL'}
@@ -405,15 +432,35 @@ export function UrlListsPage() {
                         >
                           <ExternalLink className="w-3.5 h-3.5" />
                         </a>
-                        {item.status !== 'downloading' && item.status !== 'queued' && (
+                        {item.r2_key && (
+                          <a
+                            href={r2DownloadUrl(item.r2_key, item.label || undefined)}
+                            title="Save this file to your device (phone or PC)"
+                            className="p-1.5 rounded-lg hover:bg-dark-700 text-dark-500 hover:text-white transition-colors shrink-0"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+                        {item.status === 'failed' ? (
                           <button
                             onClick={() => saveItemsToR2([item.id])}
                             disabled={saving}
-                            title={item.r2_key ? 'Fetch it again and replace the copy in R2' : 'Fetch this URL and store it in R2'}
-                            className="p-1.5 rounded-lg hover:bg-accent-500/20 text-dark-500 hover:text-accent-400 transition-colors shrink-0 disabled:opacity-40"
+                            title="Retry this download"
+                            className="p-1.5 rounded-lg hover:bg-error-500/20 text-error-400 transition-colors shrink-0 disabled:opacity-40"
                           >
-                            {item.r2_key ? <Cloud className="w-3.5 h-3.5 text-accent-400/70" /> : <CloudUpload className="w-3.5 h-3.5" />}
+                            <RefreshCw className="w-3.5 h-3.5" />
                           </button>
+                        ) : (
+                          item.status !== 'downloading' && item.status !== 'queued' && (
+                            <button
+                              onClick={() => saveItemsToR2([item.id])}
+                              disabled={saving}
+                              title={item.r2_key ? 'Fetch it again and replace the copy in R2' : 'Fetch this URL and store it in R2'}
+                              className="p-1.5 rounded-lg hover:bg-accent-500/20 text-dark-500 hover:text-accent-400 transition-colors shrink-0 disabled:opacity-40"
+                            >
+                              {item.r2_key ? <Cloud className="w-3.5 h-3.5 text-accent-400/70" /> : <CloudUpload className="w-3.5 h-3.5" />}
+                            </button>
+                          )
                         )}
                         <button
                           onClick={() => deleteItem(item.id)}
@@ -446,6 +493,7 @@ export function UrlListsPage() {
           onImport={importUrls}
         />
       )}
+      {previewItem && <PreviewModal item={previewItem} onClose={() => setPreviewItem(null)} />}
     </div>
   );
 }
@@ -454,6 +502,38 @@ function detectSource(url: string): 'telegram' | 'youtube' | 'other' {
   if (/t\.me|telegram\.org/.test(url)) return 'telegram';
   if (/youtube\.com|youtu\.be/.test(url)) return 'youtube';
   return 'other';
+}
+
+/** True for a downloaded file lucide-react/the browser can actually preview inline. */
+function isPreviewable(url: string | null): url is string {
+  if (!url) return false;
+  return /\.(mp4|webm|mov|m4v|mp3|m4a|wav|ogg)(\?|$)/i.test(url);
+}
+
+function isAudioOnly(url: string): boolean {
+  return /\.(mp3|m4a|wav|ogg)(\?|$)/i.test(url);
+}
+
+function PreviewModal({ item, onClose }: { item: UrlListItem; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in p-4" onClick={onClose}>
+      <div className="w-full max-w-2xl rounded-2xl border border-dark-700 bg-dark-900 p-4 animate-slide-up" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm text-white font-medium truncate pr-4">{item.label || item.url}</p>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-dark-800 text-dark-400 transition-colors shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        {item.r2_url && (
+          isAudioOnly(item.r2_url) ? (
+            <audio src={item.r2_url} controls autoPlay className="w-full" />
+          ) : (
+            <video src={item.r2_url} controls autoPlay className="w-full max-h-[70vh] rounded-lg bg-black" />
+          )
+        )}
+      </div>
+    </div>
+  );
 }
 
 function SourceBadge({ source }: { source: 'telegram' | 'youtube' | 'other' }) {
@@ -740,7 +820,25 @@ function AddItemModal({ onClose, onAdd }: { onClose: () => void; onAdd: (url: st
   const [label, setLabel] = useState('');
   const [epNumber, setEpNumber] = useState('');
   const [referer, setReferer] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<'ok' | 'bad' | null>(null);
+  const [checkError, setCheckError] = useState('');
   const isM3u8 = /\.m3u8(\?|$)/i.test(url);
+
+  const runCheck = async () => {
+    if (!url || !backendConfigured) return;
+    setChecking(true);
+    setCheckResult(null);
+    setCheckError('');
+    try {
+      await checkUrl(url);
+      setCheckResult('ok');
+    } catch (err) {
+      setCheckResult('bad');
+      setCheckError(err instanceof Error ? err.message : 'Could not reach that URL.');
+    }
+    setChecking(false);
+  };
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in" onClick={onClose}>
@@ -750,8 +848,34 @@ function AddItemModal({ onClose, onAdd }: { onClose: () => void; onAdd: (url: st
         <form onSubmit={(e) => { e.preventDefault(); if (url) onAdd(url, label, epNumber, referer); }} className="space-y-4">
           <div>
             <label className="text-xs text-dark-400 font-medium block mb-1.5">URL *</label>
-            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://t.me/group/123 or https://cdn.example.com/video.m3u8"
-              className="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-dark-600 outline-none focus:border-primary-500 transition-colors font-mono" />
+            <div className="flex items-center gap-2">
+              <input
+                value={url}
+                onChange={(e) => { setUrl(e.target.value); setCheckResult(null); }}
+                placeholder="https://t.me/group/123 or https://cdn.example.com/video.m3u8"
+                className="flex-1 min-w-0 bg-dark-800 border border-dark-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-dark-600 outline-none focus:border-primary-500 transition-colors font-mono"
+              />
+              <button
+                type="button"
+                onClick={runCheck}
+                disabled={!url || checking || !backendConfigured}
+                title={backendConfigured ? 'Check this link is reachable before adding it' : 'No backend configured'}
+                className="shrink-0 flex items-center gap-1.5 px-3 py-2.5 rounded-lg bg-dark-800 hover:bg-dark-700 text-dark-300 text-xs font-medium transition-colors disabled:opacity-40"
+              >
+                {checking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                Check
+              </button>
+            </div>
+            {checkResult === 'ok' && (
+              <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-success-400">
+                <ShieldCheck className="w-3.5 h-3.5" /> Reachable -- this link can be saved.
+              </p>
+            )}
+            {checkResult === 'bad' && (
+              <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-error-400">
+                <ShieldAlert className="w-3.5 h-3.5" /> {checkError}
+              </p>
+            )}
           </div>
           <div>
             <label className="text-xs text-dark-400 font-medium block mb-1.5">Label</label>
