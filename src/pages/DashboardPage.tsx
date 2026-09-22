@@ -8,9 +8,11 @@ import {
   Film,
   HardDrive,
   Layers,
+  Loader2,
   Plus,
   RefreshCw,
   Users,
+  Wand2,
   XCircle,
 } from 'lucide-react';
 
@@ -18,7 +20,7 @@ import { ActivityChart, type ActivityPoint } from '@/components/ActivityChart';
 import { AppLogo, TelegramGlyph } from '@/components/Brand';
 import { supabase } from '@/lib/supabase';
 import { useConnectionStatus } from '@/lib/hooks';
-import { backendConfigured } from '@/lib/backend';
+import { backendConfigured, resolvePageUrl, saveUrlItemsToR2 } from '@/lib/backend';
 import type { SettingsTab } from '@/pages/SettingsPage';
 import type { Download, Episode, Group, PageKey, TelegramSettings, Topic } from '@/lib/types';
 import { formatBytes, formatTimeAgo, getStatusColor } from '@/lib/utils';
@@ -165,6 +167,11 @@ export function DashboardPage({
           <QuickAction icon={<DownloadCloud className="h-3.5 w-3.5" />} label="Download queue" onClick={() => onNavigate('downloads')} />
         </div>
       </section>
+
+      {/* Quick Download -- paste one link and go, no list/group/topic/EP to
+          set up first. Lands in a "Quick Downloads" URL list, created the
+          first time this is used. */}
+      <QuickDownloadCard />
 
       {/* KPI row */}
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-3">
@@ -332,6 +339,108 @@ export function DashboardPage({
         )}
       </section>
     </div>
+  );
+}
+
+/**
+ * Paste one link and go -- no group/topic/list/EP number to set up first.
+ * A page link is auto-resolved to its real video URL (same extraction the
+ * URL Lists page's "Find the video link" button uses); a direct file link
+ * is used as typed either way. Lands in a "Quick Downloads" URL list,
+ * created automatically the first time this is used, so it's still visible
+ * later under URL Lists if someone wants to organize it properly.
+ */
+function QuickDownloadCard() {
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [isError, setIsError] = useState(false);
+
+  const handleDownload = async () => {
+    const trimmed = url.trim();
+    if (!trimmed || busy) return;
+    setBusy(true);
+    setIsError(false);
+    setMessage(backendConfigured ? 'Looking for the video link…' : 'Saving the link…');
+
+    try {
+      let list = (
+        await supabase.from('url_lists').select('id').eq('title', 'Quick Downloads').maybeSingle()
+      ).data as { id: string } | null;
+      if (!list) {
+        const created = await supabase
+          .from('url_lists')
+          .insert({ title: 'Quick Downloads', description: 'Added from the Dashboard quick-download box' })
+          .select('id')
+          .single();
+        if (created.error || !created.data) throw new Error(created.error?.message || 'Could not create the Quick Downloads list.');
+        list = created.data as { id: string };
+      }
+
+      let finalUrl = trimmed;
+      let referer = '';
+      let label = '';
+      const looksLikeDirectFile = /\.(mp4|mkv|webm|mov|avi|flv|ts|m4v|mp3|m4a|wav|flac|aac|ogg|m3u8)(\?|$)/i.test(trimmed);
+      if (backendConfigured && !looksLikeDirectFile) {
+        try {
+          const resolved = await resolvePageUrl(trimmed);
+          finalUrl = resolved.url;
+          referer = resolved.referer;
+          label = resolved.title || '';
+        } catch {
+          // Fall back to the raw pasted link -- still worth a try at download time.
+        }
+      }
+
+      const inserted = await supabase
+        .from('url_list_items')
+        .insert({ url_list_id: list.id, url: finalUrl, label: label || null, referer: referer || null })
+        .select('id')
+        .single();
+      if (inserted.error || !inserted.data) throw new Error(inserted.error?.message || 'Could not save that link.');
+
+      if (backendConfigured) {
+        setMessage('Saving to R2…');
+        await saveUrlItemsToR2([(inserted.data as { id: string }).id]);
+        setMessage('Started! Follow its progress under URL Lists → Quick Downloads.');
+      } else {
+        setMessage('Saved to URL Lists → Quick Downloads (no backend configured to fetch it yet).');
+      }
+      setUrl('');
+    } catch (err) {
+      setIsError(true);
+      setMessage(err instanceof Error ? err.message : 'Could not start the download.');
+    }
+    setBusy(false);
+  };
+
+  return (
+    <section className="rounded-2xl border border-dark-800 bg-dark-900/60 p-5">
+      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
+        <Wand2 className="h-4 w-4 text-primary-400" /> Quick Download
+      </h3>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') handleDownload(); }}
+          placeholder="Paste any video or webpage link here…"
+          disabled={busy}
+          className="flex-1 rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 text-sm text-white placeholder-dark-500 outline-none transition-colors focus:border-primary-500 disabled:opacity-60"
+        />
+        <button
+          onClick={handleDownload}
+          disabled={!url.trim() || busy}
+          className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <DownloadCloud className="h-4 w-4" />}
+          Download
+        </button>
+      </div>
+      {message && (
+        <p className={`mt-2 text-xs ${isError ? 'text-error-400' : 'text-dark-400'}`}>{message}</p>
+      )}
+    </section>
   );
 }
 
