@@ -23,6 +23,8 @@ import {
   HardDrive,
   Copy as CopyIcon,
   ExternalLink,
+  Link2,
+  Info,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { backendConfigured, callBackend, r2DownloadUrl, telegramStorageDownloadUrl } from '@/lib/backend';
@@ -35,6 +37,18 @@ import { MirrorModal } from '@/components/MirrorModal';
 
 /** The synthetic topic id used for videos that sit outside any forum topic. */
 const NO_TOPIC = '__none__';
+
+/**
+ * True for a "group" that isn't a real Telegram chat at all -- library.js
+ * files every URL-list save and manual R2 upload under a synthetic group
+ * (chat_id "manual:<show title>") so it shows up next to real Telegram
+ * groups in Downloads/episode counts. Scan/Mirror/storage-backend all
+ * assume a real Telegram chat behind chat_id, so they're hidden here rather
+ * than left to fail confusingly against a chat_id that was never one.
+ */
+function isManualGroup(group: Group): boolean {
+  return group.chat_id.startsWith('manual:');
+}
 
 /** The quick filters over a topic's videos, beyond the search and EP range. */
 type EpisodeFilter = 'all' | 'pending' | 'downloading' | 'completed' | 'failed' | 'in_r2' | 'not_in_r2';
@@ -548,90 +562,152 @@ function GroupGrid({ groups, topics, episodes, onOpen, onDelete, onAdd }: {
   onAdd: () => void;
 }) {
   const { t } = useLanguage();
-  return (
-    <div className="animate-slide-up">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-white">
-          <Users className="h-4 w-4 text-primary-400" /> {t('groups.groupsHeading')}
-          <span className="text-xs font-normal text-dark-500">{groups.length}</span>
-        </h2>
-        <button
-          onClick={onAdd}
-          className="flex items-center gap-2 rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600"
-        >
-          <Plus className="h-4 w-4" /> {t('groups.addGroup')}
-        </button>
-      </div>
+  const telegramGroups = groups.filter((g) => !isManualGroup(g));
+  const manualGroups = groups.filter(isManualGroup);
 
-      {groups.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-dark-700 bg-dark-900/40 p-12 text-center">
-          <Users className="mx-auto mb-4 h-12 w-12 text-dark-700" />
-          <p className="text-sm text-dark-400">{t('groups.noGroupsYet')}</p>
-          <p className="mb-4 mt-1 text-xs text-dark-600">{t('groups.addGroupHint')}</p>
+  return (
+    <div className="animate-slide-up space-y-6">
+      {/* Telegram groups */}
+      <div>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-white">
+            <Send className="h-4 w-4 text-primary-400" /> {t('groups.sourceTelegram')}
+            <span className="text-xs font-normal text-dark-500">{telegramGroups.length}</span>
+          </h2>
           <button
             onClick={onAdd}
-            className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-600"
+            className="flex items-center gap-2 rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600"
           >
-            <Plus className="h-4 w-4" /> {t('groups.addFirstGroup')}
+            <Plus className="h-4 w-4" /> {t('groups.addGroup')}
           </button>
         </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {groups.map((group) => {
-            const groupEpisodes = episodes.filter((e) => e.group_id === group.id);
-            const done = groupEpisodes.filter((e) => e.status === 'completed').length;
-            const topicCount = topics.filter((t) => t.group_id === group.id).length;
-            const size = groupEpisodes.reduce((sum, e) => sum + (e.file_size || 0), 0);
-            return (
-              <button
+
+        {telegramGroups.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-dark-700 bg-dark-900/40 p-12 text-center">
+            <Send className="mx-auto mb-4 h-12 w-12 text-dark-700" />
+            <p className="text-sm text-dark-400">{t('groups.noGroupsYet')}</p>
+            <p className="mb-4 mt-1 text-xs text-dark-600">{t('groups.addGroupHint')}</p>
+            <button
+              onClick={onAdd}
+              className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-600"
+            >
+              <Plus className="h-4 w-4" /> {t('groups.addFirstGroup')}
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {telegramGroups.map((group) => (
+              <GroupCard
                 key={group.id}
-                onClick={() => onOpen(group.id)}
-                className="group card-hover rounded-2xl border border-dark-800 bg-dark-900/60 p-4 text-left transition-all hover:border-primary-500/40"
-              >
-                <div className="mb-3 flex items-start gap-3">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500/30 to-accent-500/30">
-                    <span className="text-base font-bold text-white">{group.title.charAt(0).toUpperCase()}</span>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-semibold text-white">{group.title}</p>
-                      {group.is_forum && (
-                        <span className="shrink-0 rounded bg-accent-500/10 px-1.5 py-0.5 text-[9px] font-medium text-accent-400">FORUM</span>
-                      )}
-                    </div>
-                    <p className="truncate text-xs text-dark-500">{group.username ? '@' + group.username : t('groups.privateGroup')}</p>
-                  </div>
-                  <span
-                    onClick={(e) => { e.stopPropagation(); onDelete(group.id, group.title); }}
-                    title={t('groups.removeGroup')}
-                    className="rounded p-1 text-dark-600 transition-colors hover:bg-error-500/20 hover:text-error-400"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </span>
-                </div>
+                group={group}
+                episodes={episodes.filter((e) => e.group_id === group.id)}
+                topicCount={topics.filter((t) => t.group_id === group.id).length}
+                onOpen={() => onOpen(group.id)}
+                onDelete={() => onDelete(group.id, group.title)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
 
-                <div className="mb-3"><CopyableId value={group.chat_id} /></div>
-
-                <div className="mb-2 grid grid-cols-3 gap-2 text-center">
-                  <Stat icon={<MessagesSquare className="h-3 w-3" />} label={t('groups.statTopics')} value={group.is_forum ? topicCount : '—'} />
-                  <Stat icon={<Film className="h-3 w-3" />} label={t('groups.statVideos')} value={groupEpisodes.length} />
-                  <Stat icon={<HardDrive className="h-3 w-3" />} label={t('groups.statSize')} value={formatBytes(size)} />
-                </div>
-
-                <ProgressBar done={done} total={groupEpisodes.length} />
-                <div className="mt-2 flex items-center justify-between text-[10px] text-dark-500">
-                  <span>{t('groups.downloadedOfTotal').replace('{done}', String(done)).replace('{total}', String(groupEpisodes.length))}</span>
-                  <span className="flex items-center gap-1">
-                    {t('groups.lastScan').replace('{time}', formatTimeAgo(group.last_scanned_at))}
-                    <ChevronRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
-                  </span>
-                </div>
-              </button>
-            );
-          })}
+      {/* Manual / URL-sourced groups -- kept visually and physically apart from
+          real Telegram groups above, since they share nothing but the same
+          underlying table (see isManualGroup's comment). */}
+      {manualGroups.length > 0 && (
+        <div>
+          <div className="mb-3 flex items-center gap-2">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-white">
+              <Link2 className="h-4 w-4 text-accent-400" /> {t('groups.sourceManual')}
+              <span className="text-xs font-normal text-dark-500">{manualGroups.length}</span>
+            </h2>
+          </div>
+          <p className="mb-3 text-xs text-dark-500">{t('groups.sourceManualHint')}</p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {manualGroups.map((group) => (
+              <GroupCard
+                key={group.id}
+                group={group}
+                episodes={episodes.filter((e) => e.group_id === group.id)}
+                topicCount={0}
+                onOpen={() => onOpen(group.id)}
+                onDelete={() => onDelete(group.id, group.title)}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>
+  );
+}
+
+function GroupCard({ group, episodes, topicCount, onOpen, onDelete }: {
+  group: Group;
+  episodes: Episode[];
+  topicCount: number;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const { t } = useLanguage();
+  const manual = isManualGroup(group);
+  const done = episodes.filter((e) => e.status === 'completed').length;
+  const size = episodes.reduce((sum, e) => sum + (e.file_size || 0), 0);
+
+  return (
+    <button
+      onClick={onOpen}
+      className={`group card-hover rounded-2xl border border-dark-800 bg-dark-900/60 p-4 text-left transition-all ${
+        manual ? 'hover:border-accent-500/40' : 'hover:border-primary-500/40'
+      }`}
+    >
+      <div className="mb-3 flex items-start gap-3">
+        <div
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${
+            manual ? 'from-accent-500/30 to-accent-700/30' : 'from-primary-500/30 to-accent-500/30'
+          }`}
+        >
+          {manual ? (
+            <Link2 className="h-5 w-5 text-accent-300" />
+          ) : (
+            <span className="text-base font-bold text-white">{group.title.charAt(0).toUpperCase()}</span>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="truncate text-sm font-semibold text-white">{group.title}</p>
+            {group.is_forum && (
+              <span className="shrink-0 rounded bg-accent-500/10 px-1.5 py-0.5 text-[9px] font-medium text-accent-400">FORUM</span>
+            )}
+          </div>
+          <p className="truncate text-xs text-dark-500">
+            {manual ? t('groups.manualBadge') : group.username ? '@' + group.username : t('groups.privateGroup')}
+          </p>
+        </div>
+        <span
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          title={t('groups.removeGroup')}
+          className="rounded p-1 text-dark-600 transition-colors hover:bg-error-500/20 hover:text-error-400"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </span>
+      </div>
+
+      {!manual && <div className="mb-3"><CopyableId value={group.chat_id} /></div>}
+
+      <div className="mb-2 grid grid-cols-3 gap-2 text-center">
+        <Stat icon={<MessagesSquare className="h-3 w-3" />} label={t('groups.statTopics')} value={group.is_forum ? topicCount : '—'} />
+        <Stat icon={<Film className="h-3 w-3" />} label={t('groups.statVideos')} value={episodes.length} />
+        <Stat icon={<HardDrive className="h-3 w-3" />} label={t('groups.statSize')} value={formatBytes(size)} />
+      </div>
+
+      <ProgressBar done={done} total={episodes.length} />
+      <div className="mt-2 flex items-center justify-between text-[10px] text-dark-500">
+        <span>{t('groups.downloadedOfTotal').replace('{done}', String(done)).replace('{total}', String(episodes.length))}</span>
+        <span className="flex items-center gap-1">
+          {manual ? t('groups.added').replace('{time}', formatTimeAgo(group.created_at)) : t('groups.lastScan').replace('{time}', formatTimeAgo(group.last_scanned_at))}
+          <ChevronRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+        </span>
+      </div>
+    </button>
   );
 }
 
@@ -658,6 +734,7 @@ function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOp
   onForwardTopic: (topic: Topic | null, episodes: Episode[]) => void;
 }) {
   const { t } = useLanguage();
+  const manual = isManualGroup(group);
   const allEpisodes = episodesOf(group.id, null);
   const untopicked = episodesOf(group.id, NO_TOPIC);
   const totalSize = allEpisodes.reduce((sum, e) => sum + (e.file_size || 0), 0);
@@ -689,42 +766,53 @@ function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOp
                 <span className="text-[10px] text-dark-500">{t('groups.lastScan').replace('{time}', formatTimeAgo(group.last_scanned_at))}</span>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={onScan}
-                disabled={scanning}
-                className="flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-50"
-              >
-                {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {t('groups.scanGroup')}
-              </button>
-              <button
-                onClick={onMirror}
-                disabled={allEpisodes.length === 0}
-                title={t('groups.mirrorTitle')}
-                className="flex items-center gap-2 rounded-lg bg-dark-800 px-4 py-2 text-sm font-medium text-dark-300 transition-colors hover:bg-accent-500 hover:text-white disabled:opacity-40"
-              >
-                <CopyIcon className="h-4 w-4" /> {t('groups.mirrorToNewGroup')}
-              </button>
-              <div className="flex items-center rounded-lg border border-dark-700 bg-dark-800 p-0.5" title={t('groups.storageBackendTitle')}>
+            {manual ? (
+              <span className="flex items-center gap-1.5 rounded-lg bg-accent-500/10 px-3 py-2 text-xs font-medium text-accent-300">
+                <Link2 className="h-3.5 w-3.5" /> {t('groups.manualBadge')}
+              </span>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
                 <button
-                  onClick={() => onSetStorageBackend('r2')}
-                  className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                    (group.storage_backend ?? 'r2') === 'r2' ? 'bg-primary-500 text-white' : 'text-dark-400 hover:text-white'
-                  }`}
+                  onClick={onScan}
+                  disabled={scanning}
+                  className="flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-50"
                 >
-                  <Cloud className="h-3.5 w-3.5" /> R2
+                  {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {t('groups.scanGroup')}
                 </button>
                 <button
-                  onClick={() => onSetStorageBackend('telegram')}
-                  className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                    group.storage_backend === 'telegram' ? 'bg-primary-500 text-white' : 'text-dark-400 hover:text-white'
-                  }`}
+                  onClick={onMirror}
+                  disabled={allEpisodes.length === 0}
+                  title={t('groups.mirrorTitle')}
+                  className="flex items-center gap-2 rounded-lg bg-dark-800 px-4 py-2 text-sm font-medium text-dark-300 transition-colors hover:bg-accent-500 hover:text-white disabled:opacity-40"
                 >
-                  <Send className="h-3.5 w-3.5" /> Telegram
+                  <CopyIcon className="h-4 w-4" /> {t('groups.mirrorToNewGroup')}
                 </button>
+                <div className="flex items-center rounded-lg border border-dark-700 bg-dark-800 p-0.5" title={t('groups.storageBackendTitle')}>
+                  <button
+                    onClick={() => onSetStorageBackend('r2')}
+                    className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                      (group.storage_backend ?? 'r2') === 'r2' ? 'bg-primary-500 text-white' : 'text-dark-400 hover:text-white'
+                    }`}
+                  >
+                    <Cloud className="h-3.5 w-3.5" /> R2
+                  </button>
+                  <button
+                    onClick={() => onSetStorageBackend('telegram')}
+                    className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                      group.storage_backend === 'telegram' ? 'bg-primary-500 text-white' : 'text-dark-400 hover:text-white'
+                    }`}
+                  >
+                    <Send className="h-3.5 w-3.5" /> Telegram
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
           </div>
+          {manual && (
+            <p className="mt-3 flex items-center gap-1.5 text-[11px] text-dark-500">
+              <Info className="h-3.5 w-3.5 shrink-0" /> {t('groups.manualDetailHint')}
+            </p>
+          )}
 
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Stat icon={<MessagesSquare className="h-3 w-3" />} label={t('groups.statTopics')} value={group.is_forum ? topics.length : '—'} />
@@ -759,6 +847,7 @@ function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOp
                   key={topic.id}
                   title={topic.title}
                   episodes={eps}
+                  canForward={!manual}
                   onOpen={() => onOpenTopic(topic.id)}
                   onDownload={() => onDownloadTopic(eps)}
                   onForward={() => onForwardTopic(topic, eps)}
@@ -770,6 +859,7 @@ function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOp
                 title={t('groups.videosWithoutTopic')}
                 episodes={untopicked}
                 muted
+                canForward={!manual}
                 onOpen={() => onOpenTopic(NO_TOPIC)}
                 onDownload={() => onDownloadTopic(untopicked)}
                 onForward={() => onForwardTopic(null, untopicked)}
@@ -782,10 +872,11 @@ function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOp
   );
 }
 
-function TopicCard({ title, episodes, muted, onOpen, onDownload, onForward }: {
+function TopicCard({ title, episodes, muted, canForward = true, onOpen, onDownload, onForward }: {
   title: string;
   episodes: Episode[];
   muted?: boolean;
+  canForward?: boolean;
   onOpen: () => void;
   onDownload: () => void;
   onForward: () => void;
@@ -830,13 +921,15 @@ function TopicCard({ title, episodes, muted, onOpen, onDownload, onForward }: {
         >
           <Download className="h-3.5 w-3.5" /> {t('groups.downloadAll')}
         </button>
-        <button
-          onClick={onForward}
-          disabled={episodes.length === 0}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-dark-800 px-2 py-1.5 text-[11px] font-medium text-dark-300 transition-colors hover:bg-accent-500 hover:text-white disabled:opacity-40"
-        >
-          <Send className="h-3.5 w-3.5" /> {t('groups.forwardAll')}
-        </button>
+        {canForward && (
+          <button
+            onClick={onForward}
+            disabled={episodes.length === 0}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-dark-800 px-2 py-1.5 text-[11px] font-medium text-dark-300 transition-colors hover:bg-accent-500 hover:text-white disabled:opacity-40"
+          >
+            <Send className="h-3.5 w-3.5" /> {t('groups.forwardAll')}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -905,13 +998,15 @@ function EpisodeBrowser({
               )}
             </p>
           </div>
-          <button
-            onClick={onScan}
-            disabled={scanning}
-            className="flex items-center gap-2 rounded-lg bg-dark-800 px-3 py-2 text-xs font-medium text-dark-300 transition-colors hover:bg-dark-700 disabled:opacity-50"
-          >
-            {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} {t('groups.rescan')}
-          </button>
+          {!isManualGroup(group) && (
+            <button
+              onClick={onScan}
+              disabled={scanning}
+              className="flex items-center gap-2 rounded-lg bg-dark-800 px-3 py-2 text-xs font-medium text-dark-300 transition-colors hover:bg-dark-700 disabled:opacity-50"
+            >
+              {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} {t('groups.rescan')}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1011,12 +1106,14 @@ function EpisodeBrowser({
             >
               <Download className="h-3.5 w-3.5" /> {t('groups.downloadSelected')}
             </button>
-            <button
-              onClick={onForward}
-              className="flex items-center gap-1.5 rounded-lg bg-accent-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-accent-600"
-            >
-              <Send className="h-3.5 w-3.5" /> {t('groups.forwardToGroup')}
-            </button>
+            {!isManualGroup(group) && (
+              <button
+                onClick={onForward}
+                className="flex items-center gap-1.5 rounded-lg bg-accent-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-accent-600"
+              >
+                <Send className="h-3.5 w-3.5" /> {t('groups.forwardToGroup')}
+              </button>
+            )}
           </div>
         </div>
       )}
