@@ -682,13 +682,12 @@ function GroupGrid({ groups, topics, episodes, onOpen, onDelete, onAdd }: {
             </h2>
           </div>
           <p className="mb-3 text-xs text-dark-500">{t('groups.sourceManualHint')}</p>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="divide-y divide-dark-800 rounded-xl border border-dark-800 bg-dark-900/60">
             {manualGroups.map((group) => (
-              <GroupCard
+              <ManualGroupRow
                 key={group.id}
                 group={group}
                 episodes={episodes.filter((e) => e.group_id === group.id)}
-                topicCount={0}
                 onOpen={() => onOpen(group.id)}
                 onDelete={() => onDelete(group.id, group.title)}
               />
@@ -794,6 +793,51 @@ function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; va
       <div className="flex items-center justify-center gap-1 text-[9px] uppercase tracking-wide text-dark-500">{icon}{label}</div>
       <p className="mt-0.5 truncate text-xs font-semibold text-white tabular-nums">{value}</p>
     </div>
+  );
+}
+
+/**
+ * A plain list row for a manual/URL-list "group" -- the colorful card grid
+ * used for real Telegram groups was too heavy for a list that's often a
+ * dozen-plus one-off URL lists; a row reads faster than a wall of cards.
+ */
+function ManualGroupRow({ group, episodes, onOpen, onDelete }: {
+  group: Group;
+  episodes: Episode[];
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const { t } = useLanguage();
+  const done = episodes.filter((e) => e.status === 'completed').length;
+  const size = episodes.reduce((sum, e) => sum + (e.file_size || 0), 0);
+
+  return (
+    <button
+      onClick={onOpen}
+      className="group flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-dark-800/50"
+    >
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-500/15">
+        <Link2 className="h-4 w-4 text-accent-400" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-white">{group.title}</p>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-dark-500">
+          <span>{(episodes.length === 1 ? t('groups.videoInTopicOne') : t('groups.videoInTopicMany')).replace('{n}', String(episodes.length))}</span>
+          <span>{formatBytes(size)}</span>
+          <span>{t('groups.downloadedOfTotal').replace('{done}', String(done)).replace('{total}', String(episodes.length))}</span>
+          <span>{t('groups.added').replace('{time}', formatTimeAgo(group.created_at))}</span>
+        </div>
+      </div>
+      <div className="hidden w-28 shrink-0 sm:block"><ProgressBar done={done} total={episodes.length} /></div>
+      <span
+        onClick={(e) => { e.stopPropagation(); onDelete(); }}
+        title={t('groups.removeGroup')}
+        className="shrink-0 rounded p-1.5 text-dark-600 transition-colors hover:bg-error-500/20 hover:text-error-400"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </span>
+      <ChevronRight className="h-4 w-4 shrink-0 text-dark-600 transition-transform group-hover:translate-x-0.5 group-hover:text-white" />
+    </button>
   );
 }
 
