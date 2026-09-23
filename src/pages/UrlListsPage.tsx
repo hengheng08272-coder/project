@@ -98,6 +98,8 @@ export function UrlListsPage() {
   const [quickUrl, setQuickUrl] = useState('');
   const [quickAdding, setQuickAdding] = useState(false);
   const [quickStatus, setQuickStatus] = useState('');
+  const [quickMode, setQuickMode] = useState<'auto' | 'ytdlp' | 'direct'>('auto');
+  const [quickQuality, setQuickQuality] = useState<'best' | '720p' | '1080p' | 'audio_only'>('best');
 
   const loadData = useCallback(async () => {
     const [lRes, iRes] = await Promise.all([
@@ -165,7 +167,15 @@ export function UrlListsPage() {
     loadData();
   };
 
-  const addItem = async (url: string, label: string, epNumber: string, referer: string, listIdOverride?: string) => {
+  const addItem = async (
+    url: string,
+    label: string,
+    epNumber: string,
+    referer: string,
+    listIdOverride?: string,
+    mode: 'auto' | 'ytdlp' | 'direct' = 'auto',
+    quality: 'best' | '720p' | '1080p' | 'audio_only' = 'best',
+  ) => {
     const listId = listIdOverride ?? selectedList;
     if (!listId || !url) return;
     await supabase.from('url_list_items').insert({
@@ -174,6 +184,8 @@ export function UrlListsPage() {
       label: label || null,
       episode_number: epNumber ? parseInt(epNumber) : null,
       referer: referer || null,
+      download_mode: mode,
+      quality_pref: quality,
     });
     setShowAddItem(false);
     loadData();
@@ -220,7 +232,7 @@ export function UrlListsPage() {
       }
     }
 
-    await addItem(finalUrl, label, '', referer, listId);
+    await addItem(finalUrl, label, '', referer, listId, quickMode, quickQuality);
     setQuickUrl('');
     setQuickStatus('');
     setQuickAdding(false);
@@ -234,6 +246,8 @@ export function UrlListsPage() {
       label: p.label,
       episode_number: p.episode_number,
       referer: p.referer || null,
+      download_mode: 'auto' as const,
+      quality_pref: 'best' as const,
     }));
     const { error } = await supabase.from('url_list_items').insert(rows);
     if (error) {
@@ -354,20 +368,36 @@ export function UrlListsPage() {
             onChange={(e) => setQuickUrl(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') quickAdd(); }}
             onPaste={(e) => {
-              // A single pasted link (no newlines) goes straight in -- that
-              // covers the common "copy the page URL, paste it here" flow
-              // with no extra click. Pasting several lines at once is left
-              // for Auto Import instead, since this box only ever adds one
-              // item.
               const pasted = e.clipboardData.getData('text').trim();
               if (!pasted || /[\r\n]/.test(pasted) || !/^https?:\/\//i.test(pasted)) return;
               setQuickUrl(pasted);
               setTimeout(() => quickAdd(pasted), 0);
             }}
-            placeholder="Paste any link here (a webpage or a direct video/m3u8 link) — it's added automatically…"
+            placeholder="Paste any link here (a webpage, .m3u8, .ts, or direct video link) — it's added automatically…"
             disabled={quickAdding}
             className="flex-1 min-w-0 bg-transparent text-sm text-white placeholder-dark-500 outline-none disabled:opacity-60"
           />
+          <select
+            value={quickMode}
+            onChange={(e) => setQuickMode(e.target.value as 'auto' | 'ytdlp' | 'direct')}
+            title="How should this be downloaded?"
+            className="shrink-0 bg-dark-800 border border-dark-700 rounded-lg px-2 py-1.5 text-[11px] text-dark-200 outline-none focus:border-primary-500"
+          >
+            <option value="auto">Auto</option>
+            <option value="ytdlp">Force yt-dlp</option>
+            <option value="direct">Direct fetch</option>
+          </select>
+          <select
+            value={quickQuality}
+            onChange={(e) => setQuickQuality(e.target.value as 'best' | '720p' | '1080p' | 'audio_only')}
+            title="Video quality preference"
+            className="shrink-0 bg-dark-800 border border-dark-700 rounded-lg px-2 py-1.5 text-[11px] text-dark-200 outline-none focus:border-primary-500"
+          >
+            <option value="best">Best</option>
+            <option value="1080p">1080p</option>
+            <option value="720p">720p</option>
+            <option value="audio_only">Audio only</option>
+          </select>
           <button
             onClick={() => quickAdd()}
             disabled={!quickUrl.trim() || quickAdding}
@@ -584,6 +614,16 @@ export function UrlListsPage() {
                         {item.file_size ? (
                           <span className="text-[10px] text-dark-500 shrink-0 tabular-nums">{formatBytes(item.file_size)}</span>
                         ) : null}
+                        {item.download_mode && item.download_mode !== 'auto' && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary-500/15 text-primary-300 font-medium shrink-0" title={`Download mode: ${item.download_mode}`}>
+                            {item.download_mode === 'ytdlp' ? 'yt-dlp' : 'direct'}
+                          </span>
+                        )}
+                        {item.quality_pref && item.quality_pref !== 'best' && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent-500/15 text-accent-300 font-medium shrink-0" title={`Quality: ${item.quality_pref}`}>
+                            {item.quality_pref === 'audio_only' ? 'audio' : item.quality_pref}
+                          </span>
+                        )}
                         <span className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getStatusColor(item.status)} shrink-0`}>
                           {(item.status === 'downloading' || item.status === 'queued') && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
                           {item.status === 'downloading'
@@ -1045,11 +1085,13 @@ function AddListModal({ onClose, onAdd }: { onClose: () => void; onAdd: (title: 
   );
 }
 
-function AddItemModal({ onClose, onAdd }: { onClose: () => void; onAdd: (url: string, label: string, epNumber: string, referer: string) => void }) {
+function AddItemModal({ onClose, onAdd }: { onClose: () => void; onAdd: (url: string, label: string, epNumber: string, referer: string, mode?: 'auto' | 'ytdlp' | 'direct', quality?: 'best' | '720p' | '1080p' | 'audio_only') => void }) {
   const [url, setUrl] = useState('');
   const [label, setLabel] = useState('');
   const [epNumber, setEpNumber] = useState('');
   const [referer, setReferer] = useState('');
+  const [mode, setMode] = useState<'auto' | 'ytdlp' | 'direct'>('auto');
+  const [quality, setQuality] = useState<'best' | '720p' | '1080p' | 'audio_only'>('best');
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState<'ok' | 'bad' | null>(null);
   const [checkError, setCheckError] = useState('');
@@ -1100,7 +1142,7 @@ function AddItemModal({ onClose, onAdd }: { onClose: () => void; onAdd: (url: st
       <div className="w-full max-w-md rounded-2xl border border-dark-700 bg-dark-900 p-6 animate-slide-up" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-lg font-bold text-white mb-1">Add URL</h3>
         <p className="text-xs text-dark-500 mb-5">Add a single episode URL to this list</p>
-        <form onSubmit={(e) => { e.preventDefault(); if (url) onAdd(url, label, epNumber, referer); }} className="space-y-4">
+        <form onSubmit={(e) => { e.preventDefault(); if (url) onAdd(url, label, epNumber, referer, mode, quality); }} className="space-y-4">
           <div>
             <label className="text-xs text-dark-400 font-medium block mb-1.5">URL *</label>
             <div className="flex items-center gap-2">
@@ -1176,6 +1218,39 @@ function AddItemModal({ onClose, onAdd }: { onClose: () => void; onAdd: (url: st
                 An .m3u8 stream often needs the page you watched it on as a Referer, or the CDN answers 403.
               </p>
             )}
+          </div>
+          <div>
+            <label className="text-xs text-dark-400 font-medium block mb-1.5">Download Mode</label>
+            <div className="flex gap-2">
+              {([['auto', 'Auto-detect'], ['ytdlp', 'Force yt-dlp'], ['direct', 'Direct fetch']] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setMode(value)}
+                  className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors ${mode === value ? 'bg-primary-500 text-white' : 'bg-dark-800 text-dark-400 hover:bg-dark-700'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[10px] text-dark-500">
+              {mode === 'auto' ? 'Backend picks: direct fetch for plain files, yt-dlp for HLS/webpages.' : mode === 'ytdlp' ? 'Always use yt-dlp — best for .m3u8, .ts segments, and embedded players.' : 'Plain HTTP fetch — fastest for a single .mp4/.ts file on a CDN.'}
+            </p>
+          </div>
+          <div>
+            <label className="text-xs text-dark-400 font-medium block mb-1.5">Quality</label>
+            <div className="flex gap-2">
+              {([['best', 'Best'], ['1080p', '1080p'], ['720p', '720p'], ['audio_only', 'Audio only']] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setQuality(value)}
+                  className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors ${quality === value ? 'bg-primary-500 text-white' : 'bg-dark-800 text-dark-400 hover:bg-dark-700'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="flex items-center gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 rounded-lg bg-dark-800 hover:bg-dark-700 text-dark-300 text-sm font-medium transition-colors">Cancel</button>
