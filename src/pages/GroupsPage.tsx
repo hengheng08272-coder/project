@@ -25,6 +25,8 @@ import {
   ExternalLink,
   Link2,
   Info,
+  Sparkles,
+  Video,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { backendConfigured, callBackend, r2DownloadUrl, telegramStorageDownloadUrl } from '@/lib/backend';
@@ -46,6 +48,29 @@ const NO_TOPIC = '__none__';
  * assume a real Telegram chat behind chat_id, so they're hidden here rather
  * than left to fail confusingly against a chat_id that was never one.
  */
+/**
+ * A distinct, colorful gradient per group -- deterministic from the group's
+ * own id, so the same group always lands on the same pair and a page full
+ * of monogram avatars doesn't read as one flat color the way the old
+ * primary/accent-only palette did.
+ */
+const AVATAR_GRADIENTS: [string, string][] = [
+  ['#6366f1', '#8b5cf6'],
+  ['#06b6d4', '#3b82f6'],
+  ['#f43f5e', '#ec4899'],
+  ['#f59e0b', '#f97316'],
+  ['#10b981', '#14b8a6'],
+  ['#8b5cf6', '#d946ef'],
+  ['#0ea5e9', '#22d3ee'],
+  ['#ef4444', '#f59e0b'],
+];
+
+function groupGradient(id: string): [string, string] {
+  let hash = 0;
+  for (let i = 0; i < id.length; i += 1) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  return AVATAR_GRADIENTS[hash % AVATAR_GRADIENTS.length];
+}
+
 function isManualGroup(group: Group): boolean {
   return group.chat_id.startsWith('manual:');
 }
@@ -571,9 +596,36 @@ function GroupGrid({ groups, topics, episodes, onOpen, onDelete, onAdd }: {
   const { t } = useLanguage();
   const telegramGroups = groups.filter((g) => !isManualGroup(g));
   const manualGroups = groups.filter(isManualGroup);
+  const totalVideos = episodes.length;
+  const totalDone = episodes.filter((e) => e.status === 'completed').length;
+  const totalSize = episodes.reduce((sum, e) => sum + (e.file_size || 0), 0);
 
   return (
     <div className="animate-slide-up space-y-6">
+      {/* Hero -- a quick-glance summary strip, replacing what used to be a
+          plain heading straight into the group grid. */}
+      <div className="relative overflow-hidden rounded-2xl border border-dark-800 bg-gradient-to-br from-primary-500/15 via-dark-900/60 to-accent-500/10 p-5">
+        <div className="pointer-events-none absolute -right-8 -top-10 h-40 w-40 rounded-full bg-primary-500/20 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-10 left-1/3 h-32 w-32 rounded-full bg-accent-500/20 blur-3xl" />
+        <div className="relative flex flex-wrap items-center gap-4">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-500 to-accent-500 shadow-lg shadow-primary-500/20">
+            <Send className="h-6 w-6 text-white" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h1 className="flex items-center gap-1.5 text-base font-bold text-white">
+              {t('groups.pageTitle')} <Sparkles className="h-3.5 w-3.5 text-accent-400" />
+            </h1>
+            <p className="text-xs text-dark-400">{t('groups.pageSubtitle')}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <HeroStat icon={<Users className="h-3.5 w-3.5" />} value={groups.length} label={t('groups.heroGroups')} color="from-primary-500 to-primary-600" />
+            <HeroStat icon={<Video className="h-3.5 w-3.5" />} value={totalVideos} label={t('groups.heroVideos')} color="from-accent-500 to-accent-600" />
+            <HeroStat icon={<CheckCircle2 className="h-3.5 w-3.5" />} value={totalDone} label={t('groups.heroDownloaded')} color="from-success-500 to-success-600" />
+            <HeroStat icon={<HardDrive className="h-3.5 w-3.5" />} value={formatBytes(totalSize)} label={t('groups.heroStorage')} color="from-warning-500 to-warning-600" />
+          </div>
+        </div>
+      </div>
+
       {/* Telegram groups */}
       <div>
         <div className="mb-3 flex items-center justify-between">
@@ -647,6 +699,20 @@ function GroupGrid({ groups, topics, episodes, onOpen, onDelete, onAdd }: {
   );
 }
 
+function HeroStat({ icon, value, label, color }: { icon: React.ReactNode; value: React.ReactNode; label: string; color: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl border border-dark-700/60 bg-dark-900/50 px-3 py-2">
+      <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${color} text-white`}>
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <p className="text-sm font-bold leading-tight text-white tabular-nums">{value}</p>
+        <p className="text-[9px] uppercase tracking-wide text-dark-500">{label}</p>
+      </div>
+    </div>
+  );
+}
+
 function GroupCard({ group, episodes, topicCount, onOpen, onDelete }: {
   group: Group;
   episodes: Episode[];
@@ -658,24 +724,27 @@ function GroupCard({ group, episodes, topicCount, onOpen, onDelete }: {
   const manual = isManualGroup(group);
   const done = episodes.filter((e) => e.status === 'completed').length;
   const size = episodes.reduce((sum, e) => sum + (e.file_size || 0), 0);
+  const [from, to] = groupGradient(group.id);
 
   return (
     <button
       onClick={onOpen}
-      className={`group card-hover rounded-2xl border border-dark-800 bg-dark-900/60 p-4 text-left transition-all ${
-        manual ? 'hover:border-accent-500/40' : 'hover:border-primary-500/40'
-      }`}
+      style={{ '--glow': to } as React.CSSProperties}
+      className="group card-hover relative overflow-hidden rounded-2xl border border-dark-800 bg-dark-900/60 p-4 text-left transition-all hover:border-dark-600 hover:shadow-[0_0_28px_-8px_var(--glow)]"
     >
+      <div
+        className="absolute inset-x-0 top-0 h-1"
+        style={{ background: `linear-gradient(90deg, ${from}, ${to})` }}
+      />
       <div className="mb-3 flex items-start gap-3">
         <div
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${
-            manual ? 'from-accent-500/30 to-accent-700/30' : 'from-primary-500/30 to-accent-500/30'
-          }`}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-md"
+          style={{ background: `linear-gradient(135deg, ${from}, ${to})` }}
         >
           {manual ? (
-            <Link2 className="h-5 w-5 text-accent-300" />
+            <Link2 className="h-5 w-5" />
           ) : (
-            <span className="text-base font-bold text-white">{group.title.charAt(0).toUpperCase()}</span>
+            <span className="text-base font-bold">{group.title.charAt(0).toUpperCase()}</span>
           )}
         </div>
         <div className="min-w-0 flex-1">
