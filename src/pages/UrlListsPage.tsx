@@ -187,9 +187,9 @@ export function UrlListsPage() {
     label: string,
     epNumber: string,
     referer: string,
-    listIdOverride?: string,
     mode: 'auto' | 'ytdlp' | 'direct' = 'auto',
     quality: 'best' | '720p' | '1080p' | 'audio_only' = 'best',
+    listIdOverride?: string,
   ) => {
     const listId = listIdOverride ?? selectedList;
     if (!listId || !url) return;
@@ -247,7 +247,7 @@ export function UrlListsPage() {
       }
     }
 
-    await addItem(finalUrl, label, '', referer, listId, quickMode, quickQuality);
+    await addItem(finalUrl, label, '', referer, quickMode, quickQuality, listId);
     setQuickUrl('');
     setQuickStatus('');
     setQuickAdding(false);
