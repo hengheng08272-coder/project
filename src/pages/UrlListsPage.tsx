@@ -619,21 +619,36 @@ export function UrlListsPage() {
                     return (
                       <div
                         key={item.id}
-                        className="flex items-center gap-3 p-3 rounded-lg bg-dark-800/30 hover:bg-dark-800/60 transition-colors group"
+                        className="flex items-center gap-3 p-2.5 rounded-lg bg-dark-800/30 hover:bg-dark-800/60 transition-colors group"
                       >
-                        {item.episode_number !== null && (
-                          <span className={`text-xs font-bold ${currentColor.text} tabular-nums w-12 shrink-0`}>
-                            EP{String(item.episode_number).padStart(3, '0')}
-                          </span>
-                        )}
                         <SourceBadge source={source} />
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm text-white truncate font-medium">{item.label || item.url}</p>
-                          {item.r2_url ? (
-                            <p className="text-[10px] text-accent-300 truncate font-mono">{item.r2_url}</p>
-                          ) : (
-                            <p className="text-[10px] text-dark-500 truncate font-mono">{item.url}</p>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {item.episode_number !== null && (
+                              <span className={`shrink-0 text-xs font-bold ${currentColor.text} tabular-nums`}>
+                                EP{String(item.episode_number).padStart(3, '0')}
+                              </span>
+                            )}
+                            <p className="text-sm text-white truncate font-medium">{item.label || item.url}</p>
+                            <span className={`shrink-0 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getStatusColor(item.status)}`}>
+                              {(item.status === 'downloading' || item.status === 'queued') && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+                              {item.status === 'downloading'
+                                ? `saving${typeof item.progress === 'number' ? ` ${item.progress}%` : ''}`
+                                : item.status}
+                            </span>
+                            {item.download_mode && item.download_mode !== 'auto' && (
+                              <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded bg-dark-700 text-dark-300" title={`Download mode: ${item.download_mode}`}>
+                                {item.download_mode === 'ytdlp' ? 'yt-dlp' : 'direct'}
+                              </span>
+                            )}
+                            {item.quality_pref && item.quality_pref !== 'best' && (
+                              <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded bg-dark-700 text-dark-300" title={`Quality: ${item.quality_pref}`}>
+                                {item.quality_pref === 'audio_only' ? 'audio' : item.quality_pref}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-dark-500 truncate font-mono">{item.r2_url || item.url}</p>
+                          <p className="text-[10px] text-dark-500">{item.file_size ? formatBytes(item.file_size) : ''}</p>
                           {item.status === 'failed' && item.error && (
                             <p className="text-[10px] text-error-400 break-words" title={item.error}>{item.error}</p>
                           )}
@@ -646,25 +661,6 @@ export function UrlListsPage() {
                             </div>
                           )}
                         </div>
-                        {item.file_size ? (
-                          <span className="text-[10px] text-dark-500 shrink-0 tabular-nums">{formatBytes(item.file_size)}</span>
-                        ) : null}
-                        {item.download_mode && item.download_mode !== 'auto' && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary-500/15 text-primary-300 font-medium shrink-0" title={`Download mode: ${item.download_mode}`}>
-                            {item.download_mode === 'ytdlp' ? 'yt-dlp' : 'direct'}
-                          </span>
-                        )}
-                        {item.quality_pref && item.quality_pref !== 'best' && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent-500/15 text-accent-300 font-medium shrink-0" title={`Quality: ${item.quality_pref}`}>
-                            {item.quality_pref === 'audio_only' ? 'audio' : item.quality_pref}
-                          </span>
-                        )}
-                        <span className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getStatusColor(item.status)} shrink-0`}>
-                          {(item.status === 'downloading' || item.status === 'queued') && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
-                          {item.status === 'downloading'
-                            ? `saving${typeof item.progress === 'number' ? ` ${item.progress}%` : ''}`
-                            : item.status}
-                        </span>
                         {item.status === 'completed' && isPreviewable(item.r2_url) && (
                           <button
                             onClick={() => setPreviewItem(item)}
