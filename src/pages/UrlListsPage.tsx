@@ -152,14 +152,21 @@ export function UrlListsPage() {
 
   /**
    * The one-box, always-visible way to add a link: paste anything (a plain
-   * webpage or a direct file) and press Enter. A page link is auto-resolved
-   * to its real video URL first (same as the "Find the video link" button in
-   * the Add URL modal); a direct file link is added as typed. Resolving
-   * never blocks adding -- if it fails, the pasted link is saved as-is so
-   * yt-dlp can still try it at download time.
+   * webpage or a direct file) and press Enter -- or just paste it, since
+   * onPaste below calls this the moment a single link lands in the box, no
+   * Enter needed. A page link (a "watch" page with a video player embedded
+   * in it, not a direct file) is auto-resolved to its real video URL first
+   * (same as the "Find the video link" button in the Add URL modal); a
+   * direct file link is added as typed. Resolving never blocks adding -- if
+   * it fails, the pasted link is saved as-is so yt-dlp can still try it at
+   * download time.
+   *
+   * Takes an optional explicit URL so the paste handler can pass the
+   * clipboard text straight through -- state set by the same paste event
+   * (setQuickUrl) would not be visible yet inside this closure.
    */
-  const quickAdd = async () => {
-    const url = quickUrl.trim();
+  const quickAdd = async (urlOverride?: string) => {
+    const url = (urlOverride ?? quickUrl).trim();
     if (!url || !selectedList || quickAdding) return;
     setQuickAdding(true);
     setQuickStatus('');
@@ -428,12 +435,23 @@ export function UrlListsPage() {
                   value={quickUrl}
                   onChange={(e) => setQuickUrl(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') quickAdd(); }}
-                  placeholder="Paste any link here (a webpage or a direct video/m3u8 link) and press Enter…"
+                  onPaste={(e) => {
+                    // A single pasted link (no newlines) goes straight in --
+                    // that covers the common "copy the page URL, paste it
+                    // here" flow with no extra click. Pasting several lines
+                    // at once is left for Auto Import instead, since this
+                    // box only ever adds one item.
+                    const pasted = e.clipboardData.getData('text').trim();
+                    if (!pasted || /[\r\n]/.test(pasted) || !/^https?:\/\//i.test(pasted)) return;
+                    setQuickUrl(pasted);
+                    setTimeout(() => quickAdd(pasted), 0);
+                  }}
+                  placeholder="Paste any link here (a webpage or a direct video/m3u8 link) — it's added automatically…"
                   disabled={quickAdding}
                   className="flex-1 min-w-0 bg-transparent text-sm text-white placeholder-dark-500 outline-none disabled:opacity-60"
                 />
                 <button
-                  onClick={quickAdd}
+                  onClick={() => quickAdd()}
                   disabled={!quickUrl.trim() || quickAdding}
                   className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium transition-colors disabled:opacity-40"
                 >
