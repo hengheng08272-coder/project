@@ -74,12 +74,27 @@ function SupportedSourcesBadge() {
 }
 
 const COLORS = [
-  { name: 'blue', class: 'from-primary-500 to-primary-600', text: 'text-primary-400', bg: 'bg-primary-500/10' },
-  { name: 'cyan', class: 'from-accent-500 to-accent-600', text: 'text-accent-400', bg: 'bg-accent-500/10' },
-  { name: 'green', class: 'from-success-500 to-success-600', text: 'text-success-400', bg: 'bg-success-500/10' },
-  { name: 'amber', class: 'from-warning-500 to-warning-600', text: 'text-warning-400', bg: 'bg-warning-500/10' },
-  { name: 'red', class: 'from-error-500 to-error-600', text: 'text-error-400', bg: 'bg-error-500/10' },
+  { name: 'blue', class: 'from-primary-500 to-primary-600', text: 'text-primary-400', bg: 'bg-primary-500/10', glow: 'hover:shadow-[0_0_28px_-10px_theme(colors.primary.500)]' },
+  { name: 'cyan', class: 'from-accent-500 to-accent-600', text: 'text-accent-400', bg: 'bg-accent-500/10', glow: 'hover:shadow-[0_0_28px_-10px_theme(colors.accent.500)]' },
+  { name: 'green', class: 'from-success-500 to-success-600', text: 'text-success-400', bg: 'bg-success-500/10', glow: 'hover:shadow-[0_0_28px_-10px_theme(colors.success.500)]' },
+  { name: 'amber', class: 'from-warning-500 to-warning-600', text: 'text-warning-400', bg: 'bg-warning-500/10', glow: 'hover:shadow-[0_0_28px_-10px_theme(colors.warning.500)]' },
+  { name: 'red', class: 'from-error-500 to-error-600', text: 'text-error-400', bg: 'bg-error-500/10', glow: 'hover:shadow-[0_0_28px_-10px_theme(colors.error.500)]' },
 ];
+
+/** A small pill for the hero banner's at-a-glance stats -- mirrors GroupsPage's HeroStat. */
+function HeroStat({ icon, value, label, color }: { icon: React.ReactNode; value: React.ReactNode; label: string; color: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl border border-dark-700/60 bg-dark-900/50 px-3 py-2">
+      <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${color} text-white`}>
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <p className="text-sm font-bold leading-tight text-white tabular-nums">{value}</p>
+        <p className="text-[9px] uppercase tracking-wide text-dark-500">{label}</p>
+      </div>
+    </div>
+  );
+}
 
 export function UrlListsPage() {
   const [lists, setLists] = useState<UrlList[]>([]);
@@ -319,22 +334,41 @@ export function UrlListsPage() {
   const savedBytes = inR2.reduce((sum, i) => sum + (i.file_size || 0), 0);
   const existingUrls = useMemo(() => new Set(listItems.map((i) => i.url)), [listItems]);
 
+  const totalItems = items.length;
+  const totalDoneItems = items.filter((i) => i.status === 'completed').length;
+  const totalSizeAll = items.reduce((sum, i) => sum + (i.file_size || 0), 0);
+
   return (
     <div className="space-y-4 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-base font-bold text-white flex items-center gap-2">
-            <Link2 className="w-5 h-5 text-primary-400" /> URL / MP4 / M3U8 Downloader
-          </h2>
-          <p className="text-xs text-dark-500 mb-2">Organize episode URLs into lists for batch downloading</p>
-          <SupportedSourcesBadge />
+      {/* Hero -- matches the Groups page's banner treatment for a consistent
+          feel across the app instead of a plain heading. */}
+      <div className="relative overflow-hidden rounded-2xl border border-dark-800 bg-gradient-to-br from-primary-500/15 via-dark-900/60 to-accent-500/10 p-5">
+        <div className="pointer-events-none absolute -right-8 -top-10 h-40 w-40 rounded-full bg-primary-500/20 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-10 left-1/3 h-32 w-32 rounded-full bg-accent-500/20 blur-3xl" />
+        <div className="relative flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-500 to-accent-500 shadow-lg shadow-primary-500/20">
+              <Link2 className="h-6 w-6 text-white" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-base font-bold text-white">URL / MP4 / M3U8 Downloader</h1>
+              <p className="mb-2 text-xs text-dark-400">Organize episode URLs into lists for batch downloading</p>
+              <SupportedSourcesBadge />
+            </div>
+          </div>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex shrink-0 items-center gap-2 rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-600"
+          >
+            <Plus className="w-4 h-4" /> New List
+          </button>
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium transition-colors"
-        >
-          <Plus className="w-4 h-4" /> New List
-        </button>
+        <div className="relative mt-4 flex flex-wrap items-center gap-2">
+          <HeroStat icon={<List className="h-3.5 w-3.5" />} value={lists.length} label="Lists" color="from-primary-500 to-primary-600" />
+          <HeroStat icon={<Link2 className="h-3.5 w-3.5" />} value={totalItems} label="URLs" color="from-accent-500 to-accent-600" />
+          <HeroStat icon={<Check className="h-3.5 w-3.5" />} value={totalDoneItems} label="Done" color="from-success-500 to-success-600" />
+          <HeroStat icon={<Cloud className="h-3.5 w-3.5" />} value={formatBytes(totalSizeAll)} label="Saved" color="from-warning-500 to-warning-600" />
+        </div>
       </div>
 
       {/* Quick Download -- the fastest path in, and always the first thing on
@@ -419,13 +453,14 @@ export function UrlListsPage() {
                 <div
                   key={list.id}
                   onClick={() => setSelectedList(isSelected ? null : list.id)}
-                  className={`rounded-xl border p-4 cursor-pointer transition-all ${
-                    isSelected ? 'border-primary-500 bg-primary-500/5' : 'border-dark-800 bg-dark-900/60 hover:border-dark-700 card-hover'
+                  className={`relative overflow-hidden rounded-xl border p-4 cursor-pointer transition-all ${
+                    isSelected ? 'border-primary-500 bg-primary-500/5' : `border-dark-800 bg-dark-900/60 hover:border-dark-700 card-hover ${color.glow}`
                   }`}
                 >
+                  <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${color.class}`} />
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3 min-w-0">
-                      <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${color.class} flex items-center justify-center shrink-0`}>
+                      <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${color.class} flex items-center justify-center shrink-0 shadow-md`}>
                         <List className="w-4 h-4 text-white" />
                       </div>
                       <div className="min-w-0">
