@@ -659,22 +659,34 @@ function AccountsSection() {
   );
 }
 
+/**
+ * api_id/api_hash identify the application, not the phone number logging in
+ * with it -- the same pair the default account already uses works for any
+ * other phone number too. So the normal path here only ever asks for a name
+ * and a phone number; api_id/api_hash stay behind "Advanced", collapsed by
+ * default, for the rare case an operator wants a distinct app credential.
+ */
 function AddAccountForm({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
   const { t } = useLanguage();
   const [label, setLabel] = useState('');
+  const [phone, setPhone] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [apiId, setApiId] = useState('');
   const [apiHash, setApiHash] = useState('');
-  const [phone, setPhone] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!apiId || !apiHash || !phone) return;
+    if (!phone) return;
     setSaving(true);
     setError('');
     try {
-      await addTelegramAccount({ label: label || t('tg.accounts.defaultLabel'), api_id: apiId, api_hash: apiHash, phone });
+      await addTelegramAccount({
+        label: label || t('tg.accounts.defaultLabel'),
+        phone,
+        ...(apiId && apiHash ? { api_id: apiId, api_hash: apiHash } : {}),
+      });
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : t('tg.accounts.errAdd'));
@@ -695,34 +707,50 @@ function AddAccountForm({ onDone, onCancel }: { onDone: () => void; onCancel: ()
           />
         </div>
         <div>
-          <label className="mb-1.5 block text-xs font-medium text-dark-400">{t('tg.apiId')}</label>
-          <input
-            value={apiId}
-            onChange={(e) => setApiId(e.target.value)}
-            placeholder="12345678"
-            className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 font-mono text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
-          />
-        </div>
-        <div>
-          <label className="mb-1.5 block text-xs font-medium text-dark-400">{t('tg.apiHash')}</label>
-          <input
-            type="password"
-            value={apiHash}
-            onChange={(e) => setApiHash(e.target.value)}
-            placeholder="your_api_hash_here"
-            className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 font-mono text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
-          />
-        </div>
-        <div>
           <label className="mb-1.5 block text-xs font-medium text-dark-400">{t('tg.phoneNumber')}</label>
           <input
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
             placeholder="+85512345678"
+            autoFocus
             className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
           />
         </div>
       </div>
+      <p className="text-[11px] text-dark-500">{t('tg.accounts.reuseCredHint')}</p>
+
+      <button
+        type="button"
+        onClick={() => setShowAdvanced((v) => !v)}
+        className="text-[11px] font-medium text-dark-400 transition-colors hover:text-white"
+      >
+        {showAdvanced ? t('tg.accounts.hideAdvanced') : t('tg.accounts.showAdvanced')}
+      </button>
+
+      {showAdvanced && (
+        <div className="grid grid-cols-1 gap-3 border-t border-dark-700/60 pt-3 md:grid-cols-2">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-dark-400">{t('tg.apiId')}</label>
+            <input
+              value={apiId}
+              onChange={(e) => setApiId(e.target.value)}
+              placeholder="12345678"
+              className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 font-mono text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
+            />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-dark-400">{t('tg.apiHash')}</label>
+            <input
+              type="password"
+              value={apiHash}
+              onChange={(e) => setApiHash(e.target.value)}
+              placeholder="your_api_hash_here"
+              className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 font-mono text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
+            />
+          </div>
+        </div>
+      )}
+
       {error && (
         <p className="flex items-start gap-1.5 text-xs text-error-400">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {error}
@@ -731,7 +759,7 @@ function AddAccountForm({ onDone, onCancel }: { onDone: () => void; onCancel: ()
       <div className="flex items-center gap-2">
         <button
           type="submit"
-          disabled={!apiId || !apiHash || !phone || saving}
+          disabled={!phone || saving}
           className="flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-50"
         >
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} {t('tg.accounts.save')}

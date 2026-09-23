@@ -96,8 +96,14 @@ export async function listTelegramAccounts(): Promise<TelegramAccount[]> {
   return result.accounts ?? [];
 }
 
-/** Registers a new extra account's api_id/api_hash/phone -- not yet signed in. */
-export function addTelegramAccount(input: { label: string; api_id: string; api_hash: string; phone: string }) {
+/**
+ * Registers a new extra account -- not yet signed in. api_id/api_hash are
+ * optional: omitted, the backend reuses the default account's own pair
+ * (the same api_id/api_hash can sign in any phone number), which is the
+ * normal path so a user connecting a second account never needs to create
+ * one themselves.
+ */
+export function addTelegramAccount(input: { label: string; phone: string; api_id?: string; api_hash?: string }) {
   return callBackend<{ account: TelegramAccount }>('/api/telegram/accounts', input);
 }
 
