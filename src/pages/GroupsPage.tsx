@@ -263,8 +263,17 @@ export function GroupsPage() {
     }
   };
 
-  const handleDeleteGroup = async (id: string, title: string) => {
-    const confirmed = window.confirm(t('groups.confirmDelete').replace('{title}', title));
+  const handleDeleteGroup = async (id: string, title: string, manual: boolean) => {
+    // The wording differs on purpose: a manual/URL-list entry has no real
+    // Telegram group behind it, and removing it here does not touch the
+    // already-downloaded files sitting in R2, nor the original list under
+    // URL Lists -- only this app's local tracking record for it. Saying so
+    // explicitly matters because this row looks the same as a real Telegram
+    // group's delete, but "affects" nothing the user can see is downloaded.
+    const message = manual
+      ? t('groups.confirmDeleteManual').replace('{title}', title)
+      : t('groups.confirmDelete').replace('{title}', title);
+    const confirmed = window.confirm(message);
     if (!confirmed) return;
     await supabase.from('groups').delete().eq('id', id);
     if (selectedGroupId === id) backToGroups();
@@ -591,7 +600,7 @@ function GroupGrid({ groups, topics, episodes, onOpen, onDelete, onAdd }: {
   topics: Topic[];
   episodes: Episode[];
   onOpen: (id: string) => void;
-  onDelete: (id: string, title: string) => void;
+  onDelete: (id: string, title: string, manual: boolean) => void;
   onAdd: () => void;
 }) {
   const { t } = useLanguage();
@@ -663,7 +672,7 @@ function GroupGrid({ groups, topics, episodes, onOpen, onDelete, onAdd }: {
                 episodes={episodes.filter((e) => e.group_id === group.id)}
                 topicCount={topics.filter((t) => t.group_id === group.id).length}
                 onOpen={() => onOpen(group.id)}
-                onDelete={() => onDelete(group.id, group.title)}
+                onDelete={() => onDelete(group.id, group.title, false)}
               />
             ))}
           </div>
@@ -689,7 +698,7 @@ function GroupGrid({ groups, topics, episodes, onOpen, onDelete, onAdd }: {
                 group={group}
                 episodes={episodes.filter((e) => e.group_id === group.id)}
                 onOpen={() => onOpen(group.id)}
-                onDelete={() => onDelete(group.id, group.title)}
+                onDelete={() => onDelete(group.id, group.title, true)}
               />
             ))}
           </div>
