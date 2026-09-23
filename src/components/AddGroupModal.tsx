@@ -17,11 +17,13 @@ import {
   backendConfigured,
   joinChat,
   listDialogs,
+  listTelegramAccounts,
   resolveGroup,
   searchPublicChats,
   type DialogInfo,
   type PublicChatResult,
   type ResolvedGroupInfo,
+  type TelegramAccount,
 } from '@/lib/backend';
 import { useLanguage } from '@/lib/i18n';
 
@@ -30,6 +32,8 @@ export interface NewGroupInput {
   title: string;
   username: string;
   is_forum: boolean;
+  /** Which Telegram account scans/downloads this group. Null = the default account. */
+  account_id: string | null;
 }
 
 type Source = 'mine' | 'search' | 'id' | 'invite';
@@ -43,6 +47,13 @@ export function AddGroupModal({
 }) {
   const { t } = useLanguage();
   const [source, setSource] = useState<Source>(backendConfigured ? 'mine' : 'id');
+  const [accounts, setAccounts] = useState<TelegramAccount[]>([]);
+  const [accountId, setAccountId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!backendConfigured) return;
+    listTelegramAccounts().then(setAccounts).catch(() => {});
+  }, []);
 
   return (
     <div
@@ -58,6 +69,26 @@ export function AddGroupModal({
           {t('addGroup.subtitle')}
         </p>
 
+        {/* Only shown once a second account exists -- a single-account setup
+            never sees this and keeps working exactly as before. */}
+        {accounts.length > 0 && (
+          <div className="mb-4">
+            <label className="mb-1.5 block text-xs font-medium text-dark-400">{t('addGroup.accountLabel')}</label>
+            <select
+              value={accountId ?? ''}
+              onChange={(e) => setAccountId(e.target.value || null)}
+              className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 text-sm text-white outline-none transition-colors focus:border-primary-500"
+            >
+              <option value="">{t('addGroup.defaultAccount')}</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id} disabled={!a.connected}>
+                  {a.label}{a.account_username ? ` (@${a.account_username})` : ''}{!a.connected ? ` — ${t('addGroup.notConnected')}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <div className="mb-4 flex flex-wrap gap-1 rounded-xl border border-dark-800 bg-dark-800/40 p-1">
           <SourceTab active={source === 'mine'} onClick={() => setSource('mine')} icon={<List className="h-3.5 w-3.5" />} label={t('addGroup.tabMyGroups')} />
           <SourceTab active={source === 'search'} onClick={() => setSource('search')} icon={<Search className="h-3.5 w-3.5" />} label={t('addGroup.tabSearch')} />
@@ -65,10 +96,10 @@ export function AddGroupModal({
           <SourceTab active={source === 'invite'} onClick={() => setSource('invite')} icon={<Link2 className="h-3.5 w-3.5" />} label={t('addGroup.tabInvite')} />
         </div>
 
-        {source === 'mine' && <MyGroups onAdd={onAdd} onFallback={() => setSource('id')} />}
-        {source === 'search' && <SearchGroups onAdd={onAdd} />}
-        {source === 'id' && <ByChatId onAdd={onAdd} onClose={onClose} />}
-        {source === 'invite' && <ByInvite onAdd={onAdd} />}
+        {source === 'mine' && <MyGroups onAdd={onAdd} onFallback={() => setSource('id')} accountId={accountId} />}
+        {source === 'search' && <SearchGroups onAdd={onAdd} accountId={accountId} />}
+        {source === 'id' && <ByChatId onAdd={onAdd} onClose={onClose} accountId={accountId} />}
+        {source === 'invite' && <ByInvite onAdd={onAdd} accountId={accountId} />}
       </div>
     </div>
   );
@@ -99,7 +130,7 @@ function SourceTab({
 }
 
 /** Lists the groups the userbot is already in — no chat ID to copy. */
-function MyGroups({ onAdd, onFallback }: { onAdd: (data: NewGroupInput) => void; onFallback: () => void }) {
+function MyGroups({ onAdd, onFallback, accountId }: { onAdd: (data: NewGroupInput) => void; onFallback: () => void; accountId: string | null }) {
   const { t } = useLanguage();
   const [dialogs, setDialogs] = useState<DialogInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,6 +138,7 @@ function MyGroups({ onAdd, onFallback }: { onAdd: (data: NewGroupInput) => void;
   const [query, setQuery] = useState('');
 
   useEffect(() => {
+    setLoading(true);
     (async () => {
       if (!backendConfigured) {
         setError(t('addGroup.errNoBackendList'));
@@ -114,7 +146,7 @@ function MyGroups({ onAdd, onFallback }: { onAdd: (data: NewGroupInput) => void;
         return;
       }
       try {
-        const result = await listDialogs();
+        const result = await listDialogs(accountId);
         setDialogs(result.dialogs ?? []);
       } catch (err) {
         setError(err instanceof Error ? err.message : t('addGroup.errLoadGroups'));
@@ -122,7 +154,7 @@ function MyGroups({ onAdd, onFallback }: { onAdd: (data: NewGroupInput) => void;
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [accountId]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -181,6 +213,7 @@ function MyGroups({ onAdd, onFallback }: { onAdd: (data: NewGroupInput) => void;
                   title: dialog.title,
                   username: dialog.username ?? '',
                   is_forum: dialog.is_forum,
+                  account_id: accountId,
                 })
               }
               className="flex w-full items-center gap-3 rounded-lg bg-dark-800/40 p-2.5 text-left transition-colors hover:bg-primary-500/10"
@@ -219,7 +252,7 @@ function MyGroups({ onAdd, onFallback }: { onAdd: (data: NewGroupInput) => void;
  * global directory search), then joins whichever one is picked before adding
  * it -- so a show's group doesn't need to be found and joined by hand first.
  */
-function SearchGroups({ onAdd }: { onAdd: (data: NewGroupInput) => void }) {
+function SearchGroups({ onAdd, accountId }: { onAdd: (data: NewGroupInput) => void; accountId: string | null }) {
   const { t } = useLanguage();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<PublicChatResult[]>([]);
@@ -241,7 +274,7 @@ function SearchGroups({ onAdd }: { onAdd: (data: NewGroupInput) => void }) {
       setSearching(true);
       setError('');
       try {
-        const result = await searchPublicChats(q);
+        const result = await searchPublicChats(q, 20, accountId);
         setResults(result.results);
       } catch (err) {
         setError(err instanceof Error ? err.message : t('addGroup.errSearchFailed'));
@@ -253,18 +286,19 @@ function SearchGroups({ onAdd }: { onAdd: (data: NewGroupInput) => void }) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
+  }, [query, accountId]);
 
   const handleJoin = async (result: PublicChatResult) => {
     setJoiningId(result.chat_id);
     setError('');
     try {
-      const joined = await joinChat(result.username ? `@${result.username}` : result.chat_id);
+      const joined = await joinChat(result.username ? `@${result.username}` : result.chat_id, accountId);
       onAdd({
         chat_id: joined.chat_id,
         title: joined.title,
         username: joined.username ?? '',
         is_forum: joined.is_forum,
+        account_id: accountId,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : t('addGroup.errJoinFailed'));
@@ -353,7 +387,7 @@ function SearchGroups({ onAdd }: { onAdd: (data: NewGroupInput) => void }) {
 }
 
 /** Joins a public @name or a t.me/+hash link, then adds what it joined. */
-function ByInvite({ onAdd }: { onAdd: (data: NewGroupInput) => void }) {
+function ByInvite({ onAdd, accountId }: { onAdd: (data: NewGroupInput) => void; accountId: string | null }) {
   const { t } = useLanguage();
   const [invite, setInvite] = useState('');
   const [joining, setJoining] = useState(false);
@@ -365,12 +399,13 @@ function ByInvite({ onAdd }: { onAdd: (data: NewGroupInput) => void }) {
     setJoining(true);
     setError('');
     try {
-      const result = await joinChat(value);
+      const result = await joinChat(value, accountId);
       onAdd({
         chat_id: result.chat_id,
         title: result.title,
         username: result.username ?? '',
         is_forum: result.is_forum,
+        account_id: accountId,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : t('addGroup.errJoinFailed'));
@@ -415,7 +450,7 @@ function ByInvite({ onAdd }: { onAdd: (data: NewGroupInput) => void }) {
 }
 
 /** The original flow: paste a chat ID and let the service confirm it. */
-function ByChatId({ onAdd, onClose }: { onAdd: (data: NewGroupInput) => void; onClose: () => void }) {
+function ByChatId({ onAdd, onClose, accountId }: { onAdd: (data: NewGroupInput) => void; onClose: () => void; accountId: string | null }) {
   const { t } = useLanguage();
   const [chatId, setChatId] = useState('');
   const [title, setTitle] = useState('');
@@ -446,7 +481,7 @@ function ByChatId({ onAdd, onClose }: { onAdd: (data: NewGroupInput) => void; on
       const myRequestId = ++requestIdRef.current;
       setVerifyState('checking');
       try {
-        const info = await resolveGroup(trimmed);
+        const info = await resolveGroup(trimmed, accountId);
         if (myRequestId !== requestIdRef.current) return; // superseded by a newer request
         setResolved(info);
         setTitle(info.title || '');
@@ -463,12 +498,13 @@ function ByChatId({ onAdd, onClose }: { onAdd: (data: NewGroupInput) => void; on
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [chatId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId, accountId]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatId || !title) return;
-    onAdd({ chat_id: chatId, title, username, is_forum: isForum });
+    onAdd({ chat_id: chatId, title, username, is_forum: isForum, account_id: accountId });
   };
 
   return (

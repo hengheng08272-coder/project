@@ -64,14 +64,14 @@ export interface ResolvedGroupInfo {
 }
 
 /** Looks a Telegram chat up by ID so the UI can confirm it before using it. */
-export async function resolveGroup(chatId: string): Promise<ResolvedGroupInfo> {
+export async function resolveGroup(chatId: string, accountId?: string | null): Promise<ResolvedGroupInfo> {
   const result = await callBackend<{
     title: string;
     username?: string | null;
     is_forum?: boolean;
     participants_count?: number;
     topics?: { topic_id: string; title: string }[];
-  }>('/api/telegram/groups/resolve', { chat_id: chatId });
+  }>('/api/telegram/groups/resolve', { chat_id: chatId, account_id: accountId || undefined });
   return {
     title: result.title,
     username: result.username ?? null,
@@ -79,6 +79,45 @@ export async function resolveGroup(chatId: string): Promise<ResolvedGroupInfo> {
     participants_count: result.participants_count,
     topics: result.topics,
   };
+}
+
+export interface TelegramAccount {
+  id: string;
+  label: string;
+  phone: string | null;
+  connected: boolean;
+  account_first_name: string | null;
+  account_username: string | null;
+}
+
+/** The extra Telegram accounts beyond the default one (Settings › Telegram). */
+export async function listTelegramAccounts(): Promise<TelegramAccount[]> {
+  const result = await callBackend<{ accounts: TelegramAccount[] }>('/api/telegram/accounts/list');
+  return result.accounts ?? [];
+}
+
+/** Registers a new extra account's api_id/api_hash/phone -- not yet signed in. */
+export function addTelegramAccount(input: { label: string; api_id: string; api_hash: string; phone: string }) {
+  return callBackend<{ account: TelegramAccount }>('/api/telegram/accounts', input);
+}
+
+/** Removes an extra account. Any group pointed at it falls back to the default account. */
+export function deleteTelegramAccount(id: string) {
+  return callBackend(`/api/telegram/accounts/${id}/delete`);
+}
+
+export function sendAccountCode(id: string) {
+  return callBackend<{ phone: string }>(`/api/telegram/accounts/${id}/send-code`);
+}
+
+export interface VerifyCodeResult {
+  needsPassword?: boolean;
+  session_string?: string;
+  account?: { id: string; username: string | null; first_name: string | null };
+}
+
+export function verifyAccountCode(id: string, code: string, password?: string | null) {
+  return callBackend<VerifyCodeResult>(`/api/telegram/accounts/${id}/verify-code`, { code, password: password || undefined });
 }
 
 /** Asks the backend to start working a forward job that was just created. */
@@ -345,8 +384,8 @@ export async function checkHealth(): Promise<BackendHealth> {
 }
 
 /** Lists the groups the userbot is a member of, so a chat ID need not be typed. */
-export function listDialogs() {
-  return callBackend<{ dialogs: DialogInfo[] }>('/api/telegram/dialogs');
+export function listDialogs(accountId?: string | null) {
+  return callBackend<{ dialogs: DialogInfo[] }>('/api/telegram/dialogs', { account_id: accountId || undefined });
 }
 
 export interface DialogInfo {
@@ -358,8 +397,8 @@ export interface DialogInfo {
 }
 
 /** Joins a public group or an invite link, then returns the group it resolved to. */
-export function joinChat(invite: string) {
-  return callBackend<ResolvedGroupInfo & { chat_id: string }>('/api/telegram/join', { invite });
+export function joinChat(invite: string, accountId?: string | null) {
+  return callBackend<ResolvedGroupInfo & { chat_id: string }>('/api/telegram/join', { invite, account_id: accountId || undefined });
 }
 
 export interface PublicChatResult {
@@ -374,8 +413,8 @@ export interface PublicChatResult {
 }
 
 /** Searches Telegram's public directory by keyword -- groups/channels not yet joined included. */
-export function searchPublicChats(query: string, limit = 20) {
-  return callBackend<{ results: PublicChatResult[] }>('/api/telegram/groups/search', { query, limit });
+export function searchPublicChats(query: string, limit = 20, accountId?: string | null) {
+  return callBackend<{ results: PublicChatResult[] }>('/api/telegram/groups/search', { query, limit, account_id: accountId || undefined });
 }
 
 /** Sends a short message to the userbot's own Saved Messages. */

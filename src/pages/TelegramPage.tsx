@@ -16,9 +16,23 @@ import {
   AtSign,
   RotateCcw,
   PackageOpen,
+  Plus,
+  Trash2,
+  Users,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { callBackend, checkHealth, startTakeout, stopTakeout } from '@/lib/backend';
+import {
+  addTelegramAccount,
+  callBackend,
+  checkHealth,
+  deleteTelegramAccount,
+  listTelegramAccounts,
+  sendAccountCode,
+  startTakeout,
+  stopTakeout,
+  verifyAccountCode,
+  type TelegramAccount,
+} from '@/lib/backend';
 import { useLanguage } from '@/lib/i18n';
 import type { TelegramSettings } from '@/lib/types';
 import { formatTimeAgo } from '@/lib/utils';
@@ -473,6 +487,10 @@ export function TelegramPage() {
         </div>
       )}
 
+      {/* Additional Telegram accounts -- each can scan/download its own set
+          of groups, picked when a group is added (see AddGroupModal). */}
+      <AccountsSection />
+
       {/* Takeout mode — advanced, off by default */}
       {connected && (
         <div className="rounded-xl border border-dark-800 bg-dark-900/60 p-5">
@@ -554,6 +572,295 @@ export function TelegramPage() {
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Manages Telegram accounts beyond the default one above -- each gets its
+ * own session and can be picked when adding a group (AddGroupModal), so a
+ * group can be scanned/downloaded through a different account than the
+ * original single-account setup used. Fully additive: a setup that never
+ * adds one here behaves exactly like before this existed.
+ */
+function AccountsSection() {
+  const { t } = useLanguage();
+  const [accounts, setAccounts] = useState<TelegramAccount[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
+
+  const reload = () => {
+    listTelegramAccounts()
+      .then(setAccounts)
+      .catch((err) => setError(err instanceof Error ? err.message : t('tg.accounts.errAdd')))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleRemove = async (id: string) => {
+    if (!window.confirm(t('tg.accounts.confirmRemove'))) return;
+    setError('');
+    try {
+      await deleteTelegramAccount(id);
+      reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('tg.accounts.errRemove'));
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-dark-800 bg-dark-900/60 p-5">
+      <div className="mb-1 flex items-center justify-between">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
+          <Users className="h-4 w-4 text-accent-400" /> {t('tg.accounts.title')}
+        </h3>
+        <button
+          onClick={() => setShowAdd((v) => !v)}
+          className="flex items-center gap-1.5 rounded-lg bg-dark-800 px-3 py-1.5 text-xs font-medium text-dark-300 transition-colors hover:bg-dark-700 hover:text-white"
+        >
+          <Plus className="h-3.5 w-3.5" /> {t('tg.accounts.addAccount')}
+        </button>
+      </div>
+      <p className="mb-4 text-xs text-dark-500">{t('tg.accounts.hint')}</p>
+
+      {error && (
+        <p className="mb-3 flex items-start gap-1.5 text-xs text-error-400">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {error}
+        </p>
+      )}
+
+      {showAdd && (
+        <AddAccountForm
+          onDone={() => {
+            setShowAdd(false);
+            reload();
+          }}
+          onCancel={() => setShowAdd(false)}
+        />
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-primary-500" /></div>
+      ) : accounts.length === 0 ? (
+        !showAdd && <p className="py-4 text-center text-xs text-dark-600">{t('tg.accounts.empty')}</p>
+      ) : (
+        <div className="space-y-2">
+          {accounts.map((account) => (
+            <AccountRow key={account.id} account={account} onChanged={reload} onRemove={() => handleRemove(account.id)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddAccountForm({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+  const { t } = useLanguage();
+  const [label, setLabel] = useState('');
+  const [apiId, setApiId] = useState('');
+  const [apiHash, setApiHash] = useState('');
+  const [phone, setPhone] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!apiId || !apiHash || !phone) return;
+    setSaving(true);
+    setError('');
+    try {
+      await addTelegramAccount({ label: label || t('tg.accounts.defaultLabel'), api_id: apiId, api_hash: apiHash, phone });
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('tg.accounts.errAdd'));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="mb-4 space-y-3 rounded-lg border border-dark-700 bg-dark-800/40 p-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-dark-400">{t('tg.accounts.labelField')}</label>
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder={t('tg.accounts.defaultLabel')}
+            className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
+          />
+        </div>
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-dark-400">{t('tg.apiId')}</label>
+          <input
+            value={apiId}
+            onChange={(e) => setApiId(e.target.value)}
+            placeholder="12345678"
+            className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 font-mono text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
+          />
+        </div>
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-dark-400">{t('tg.apiHash')}</label>
+          <input
+            type="password"
+            value={apiHash}
+            onChange={(e) => setApiHash(e.target.value)}
+            placeholder="your_api_hash_here"
+            className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 font-mono text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
+          />
+        </div>
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-dark-400">{t('tg.phoneNumber')}</label>
+          <input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="+85512345678"
+            className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
+          />
+        </div>
+      </div>
+      {error && (
+        <p className="flex items-start gap-1.5 text-xs text-error-400">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {error}
+        </p>
+      )}
+      <div className="flex items-center gap-2">
+        <button
+          type="submit"
+          disabled={!apiId || !apiHash || !phone || saving}
+          className="flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} {t('tg.accounts.save')}
+        </button>
+        <button type="button" onClick={onCancel} className="text-xs text-dark-400 transition-colors hover:text-white">
+          {t('tg.cancel')}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function AccountRow({ account, onChanged, onRemove }: { account: TelegramAccount; onChanged: () => void; onRemove: () => void }) {
+  const { t } = useLanguage();
+  const [connecting, setConnecting] = useState(false);
+  const [awaitingCode, setAwaitingCode] = useState(false);
+  const [needsPassword, setNeedsPassword] = useState(false);
+  const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const handleConnect = async () => {
+    setError('');
+    setConnecting(true);
+    try {
+      await sendAccountCode(account.id);
+      setAwaitingCode(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('tg.errSendCode'));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const handleVerify = async () => {
+    setError('');
+    setConnecting(true);
+    try {
+      const result = await verifyAccountCode(account.id, code, needsPassword ? password : undefined);
+      if (result.needsPassword) {
+        setNeedsPassword(true);
+        return;
+      }
+      setAwaitingCode(false);
+      setCode('');
+      setPassword('');
+      setNeedsPassword(false);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('tg.errVerifyCode'));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-dark-700/60 bg-dark-800/40 p-3">
+      <div className="flex items-center gap-3">
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${account.connected ? 'bg-success-500/20' : 'bg-dark-800'}`}>
+          <User className={`h-4 w-4 ${account.connected ? 'text-success-400' : 'text-dark-500'}`} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-white">{account.label}</p>
+          <p className="truncate text-[11px] text-dark-500">
+            {account.account_username ? `@${account.account_username}` : account.phone || '—'}
+          </p>
+        </div>
+        {account.connected ? (
+          <span className="flex shrink-0 items-center gap-1.5 rounded-lg bg-success-500/10 px-2.5 py-1 text-[11px] font-medium text-success-400">
+            <CheckCircle2 className="h-3.5 w-3.5" /> {t('tg.accounts.connected')}
+          </span>
+        ) : !awaitingCode ? (
+          <button
+            onClick={handleConnect}
+            disabled={connecting}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-success-500 px-3 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-success-600 disabled:opacity-50"
+          >
+            {connecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} {t('tg.accounts.connect')}
+          </button>
+        ) : null}
+        <button
+          onClick={onRemove}
+          title={t('tg.accounts.remove')}
+          className="shrink-0 rounded-lg p-1.5 text-dark-600 transition-colors hover:bg-error-500/20 hover:text-error-400"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {awaitingCode && !account.connected && (
+        <div className="mt-3 space-y-2 border-t border-dark-700/60 pt-3">
+          <p className="text-xs text-dark-400">{t('tg.enterCodeSentTo').replace('{phone}', account.phone || '')}</p>
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="12345"
+            className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 font-mono text-sm tracking-widest text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
+          />
+          {needsPassword && (
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={t('tg.placeholder2fa')}
+              className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
+            />
+          )}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleVerify}
+              disabled={!code || connecting}
+              className="flex items-center gap-2 rounded-lg bg-success-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-success-600 disabled:opacity-50"
+            >
+              {connecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} {t('tg.verifyConnect')}
+            </button>
+            <button
+              onClick={() => { setAwaitingCode(false); setCode(''); setPassword(''); setNeedsPassword(false); }}
+              className="text-xs text-dark-400 transition-colors hover:text-white"
+            >
+              {t('tg.cancel')}
+            </button>
+          </div>
+        </div>
+      )}
+      {error && (
+        <p className="mt-2 flex items-start gap-1.5 text-xs text-error-400">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {error}
+        </p>
+      )}
     </div>
   );
 }

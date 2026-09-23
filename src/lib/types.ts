@@ -60,6 +60,8 @@ export interface Group {
   storage_backend: 'r2' | 'telegram';
   /** When true, the worker re-scans this group on its own every AUTO_RESCAN_MINUTES, so new episodes show up without a manual "Scan" click. */
   auto_rescan: boolean;
+  /** Which Telegram account scans/downloads this group. Null = the default account (telegram_settings). */
+  account_id: string | null;
   created_at: string;
   updated_at: string;
 }
