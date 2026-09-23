@@ -131,16 +131,45 @@ export function UrlListsPage() {
     }
   };
 
+  const QUICK_LIST_TITLE = 'Quick Downloads';
+
+  /**
+   * Quick Download sits above the list picker and works with nothing
+   * selected yet: the first paste reuses (or creates) a "Quick Downloads"
+   * list and switches to it, so pasting a link is never gated on first
+   * creating or picking a list. Returns the id directly instead of relying
+   * on selectedList's state update, which would not be visible yet to the
+   * same call that triggered it.
+   */
+  const ensureQuickList = async (): Promise<string> => {
+    if (selectedList) return selectedList;
+    const existing = lists.find((l) => l.title === QUICK_LIST_TITLE);
+    if (existing) {
+      setSelectedList(existing.id);
+      return existing.id;
+    }
+    const { data } = await supabase
+      .from('url_lists')
+      .insert({ title: QUICK_LIST_TITLE, description: 'Links added from the Quick Download box', color: 'blue' })
+      .select()
+      .single();
+    const created = data as UrlList;
+    setLists((prev) => [created, ...prev]);
+    setSelectedList(created.id);
+    return created.id;
+  };
+
   const deleteList = async (id: string) => {
     await supabase.from('url_lists').delete().eq('id', id);
     if (selectedList === id) setSelectedList(null);
     loadData();
   };
 
-  const addItem = async (url: string, label: string, epNumber: string, referer: string) => {
-    if (!selectedList || !url) return;
+  const addItem = async (url: string, label: string, epNumber: string, referer: string, listIdOverride?: string) => {
+    const listId = listIdOverride ?? selectedList;
+    if (!listId || !url) return;
     await supabase.from('url_list_items').insert({
-      url_list_id: selectedList,
+      url_list_id: listId,
       url,
       label: label || null,
       episode_number: epNumber ? parseInt(epNumber) : null,
@@ -163,13 +192,16 @@ export function UrlListsPage() {
    *
    * Takes an optional explicit URL so the paste handler can pass the
    * clipboard text straight through -- state set by the same paste event
-   * (setQuickUrl) would not be visible yet inside this closure.
+   * (setQuickUrl) would not be visible yet inside this closure. Needs no
+   * list selected beforehand either -- ensureQuickList() reuses or creates
+   * a "Quick Downloads" list on first use.
    */
   const quickAdd = async (urlOverride?: string) => {
     const url = (urlOverride ?? quickUrl).trim();
-    if (!url || !selectedList || quickAdding) return;
+    if (!url || quickAdding) return;
     setQuickAdding(true);
     setQuickStatus('');
+    const listId = await ensureQuickList();
 
     let finalUrl = url;
     let referer = '';
@@ -188,7 +220,7 @@ export function UrlListsPage() {
       }
     }
 
-    await addItem(finalUrl, label, '', referer);
+    await addItem(finalUrl, label, '', referer, listId);
     setQuickUrl('');
     setQuickStatus('');
     setQuickAdding(false);
@@ -303,6 +335,55 @@ export function UrlListsPage() {
         >
           <Plus className="w-4 h-4" /> New List
         </button>
+      </div>
+
+      {/* Quick Download -- the fastest path in, and always the first thing on
+          the page: paste a link (or just press Enter) and it's resolved and
+          saved without picking or creating a list first. The first use
+          reuses/creates a "Quick Downloads" list (ensureQuickList); once a
+          list is selected below, new links go there instead. */}
+      <div className="rounded-xl border border-primary-500/30 bg-gradient-to-r from-primary-500/10 to-accent-500/10 p-3">
+        <div className="mb-2 flex items-center gap-2">
+          <Download className="w-4 h-4 text-primary-400" />
+          <p className="text-sm font-semibold text-white">Quick Download</p>
+        </div>
+        <div className="flex items-center gap-2 rounded-xl border border-dark-700 bg-dark-900/60 p-2">
+          <Wand2 className="w-4 h-4 shrink-0 text-primary-400 ml-1" />
+          <input
+            value={quickUrl}
+            onChange={(e) => setQuickUrl(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') quickAdd(); }}
+            onPaste={(e) => {
+              // A single pasted link (no newlines) goes straight in -- that
+              // covers the common "copy the page URL, paste it here" flow
+              // with no extra click. Pasting several lines at once is left
+              // for Auto Import instead, since this box only ever adds one
+              // item.
+              const pasted = e.clipboardData.getData('text').trim();
+              if (!pasted || /[\r\n]/.test(pasted) || !/^https?:\/\//i.test(pasted)) return;
+              setQuickUrl(pasted);
+              setTimeout(() => quickAdd(pasted), 0);
+            }}
+            placeholder="Paste any link here (a webpage or a direct video/m3u8 link) — it's added automatically…"
+            disabled={quickAdding}
+            className="flex-1 min-w-0 bg-transparent text-sm text-white placeholder-dark-500 outline-none disabled:opacity-60"
+          />
+          <button
+            onClick={() => quickAdd()}
+            disabled={!quickUrl.trim() || quickAdding}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium transition-colors disabled:opacity-40"
+          >
+            {quickAdding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+            Add
+          </button>
+        </div>
+        <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-dark-500">
+          {quickStatus ? (
+            <><Loader2 className="w-3 h-3 animate-spin text-primary-400" /> {quickStatus}</>
+          ) : (
+            <>Saved to: <span className="font-medium text-dark-300">{currentList?.title || QUICK_LIST_TITLE}</span></>
+          )}
+        </p>
       </div>
 
       {error && (
@@ -426,44 +507,6 @@ export function UrlListsPage() {
                   </button>
                 </div>
               </div>
-
-              {/* Quick add -- the main, always-visible way to add a link: paste and
-                  press Enter. No modal needed for the common case. */}
-              <div className="mb-3 flex items-center gap-2 rounded-xl border border-dark-700 bg-dark-800/40 p-2">
-                <Wand2 className="w-4 h-4 shrink-0 text-primary-400 ml-1" />
-                <input
-                  value={quickUrl}
-                  onChange={(e) => setQuickUrl(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') quickAdd(); }}
-                  onPaste={(e) => {
-                    // A single pasted link (no newlines) goes straight in --
-                    // that covers the common "copy the page URL, paste it
-                    // here" flow with no extra click. Pasting several lines
-                    // at once is left for Auto Import instead, since this
-                    // box only ever adds one item.
-                    const pasted = e.clipboardData.getData('text').trim();
-                    if (!pasted || /[\r\n]/.test(pasted) || !/^https?:\/\//i.test(pasted)) return;
-                    setQuickUrl(pasted);
-                    setTimeout(() => quickAdd(pasted), 0);
-                  }}
-                  placeholder="Paste any link here (a webpage or a direct video/m3u8 link) — it's added automatically…"
-                  disabled={quickAdding}
-                  className="flex-1 min-w-0 bg-transparent text-sm text-white placeholder-dark-500 outline-none disabled:opacity-60"
-                />
-                <button
-                  onClick={() => quickAdd()}
-                  disabled={!quickUrl.trim() || quickAdding}
-                  className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium transition-colors disabled:opacity-40"
-                >
-                  {quickAdding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                  Add
-                </button>
-              </div>
-              {quickStatus && (
-                <p className="mb-3 -mt-1.5 flex items-center gap-1.5 text-[11px] text-primary-300">
-                  <Loader2 className="w-3 h-3 animate-spin" /> {quickStatus}
-                </p>
-              )}
 
               {/* Quick stats */}
               {listItems.length > 0 && (
