@@ -87,7 +87,9 @@ export interface TelegramAccount {
   phone: string | null;
   connected: boolean;
   account_first_name: string | null;
+  account_last_name: string | null;
   account_username: string | null;
+  account_user_id: string | null;
 }
 
 /** The extra Telegram accounts beyond the default one (Settings › Telegram). */
@@ -110,6 +112,11 @@ export function addTelegramAccount(input: { label: string; phone: string; api_id
 /** Removes an extra account. Any group pointed at it falls back to the default account. */
 export function deleteTelegramAccount(id: string) {
   return callBackend(`/api/telegram/accounts/${id}/delete`);
+}
+
+/** Signs an extra account out and clears its session -- unlike delete, the account row (and its groups) stay. */
+export function logoutTelegramAccount(id: string) {
+  return callBackend(`/api/telegram/accounts/${id}/logout`);
 }
 
 export function sendAccountCode(id: string) {

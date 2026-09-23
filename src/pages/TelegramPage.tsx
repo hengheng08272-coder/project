@@ -19,10 +19,14 @@ import {
   Plus,
   Trash2,
   Users,
+  LogOut,
+  Fingerprint,
+  ChevronDown,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import {
   addTelegramAccount,
+  logoutTelegramAccount,
   callBackend,
   checkHealth,
   deleteTelegramAccount,
@@ -614,19 +618,24 @@ function AccountsSection() {
   };
 
   return (
-    <div className="rounded-xl border border-dark-800 bg-dark-900/60 p-5">
-      <div className="mb-1 flex items-center justify-between">
-        <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
-          <Users className="h-4 w-4 text-accent-400" /> {t('tg.accounts.title')}
+    <div className="relative overflow-hidden rounded-2xl border border-dark-800 bg-dark-900/60 p-5">
+      <div className="pointer-events-none absolute -right-10 -top-12 h-36 w-36 rounded-full bg-accent-500/10 blur-3xl" />
+      <div className="relative mb-1 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2.5 text-sm font-semibold text-white">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-accent-500 to-primary-500 shadow-md shadow-accent-500/20">
+            <Users className="h-4 w-4 text-white" />
+          </span>
+          {t('tg.accounts.title')}
+          {accounts.length > 0 && <span className="text-xs font-normal text-dark-500">{accounts.length}</span>}
         </h3>
         <button
           onClick={() => setShowAdd((v) => !v)}
-          className="flex items-center gap-1.5 rounded-lg bg-dark-800 px-3 py-1.5 text-xs font-medium text-dark-300 transition-colors hover:bg-dark-700 hover:text-white"
+          className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-accent-500 to-primary-500 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-all hover:brightness-110"
         >
           <Plus className="h-3.5 w-3.5" /> {t('tg.accounts.addAccount')}
         </button>
       </div>
-      <p className="mb-4 text-xs text-dark-500">{t('tg.accounts.hint')}</p>
+      <p className="relative mb-4 text-xs text-dark-500">{t('tg.accounts.hint')}</p>
 
       {error && (
         <p className="mb-3 flex items-start gap-1.5 text-xs text-error-400">
@@ -722,8 +731,9 @@ function AddAccountForm({ onDone, onCancel }: { onDone: () => void; onCancel: ()
       <button
         type="button"
         onClick={() => setShowAdvanced((v) => !v)}
-        className="text-[11px] font-medium text-dark-400 transition-colors hover:text-white"
+        className="flex items-center gap-1 text-[11px] font-medium text-dark-400 transition-colors hover:text-white"
       >
+        <ChevronDown className={`h-3 w-3 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
         {showAdvanced ? t('tg.accounts.hideAdvanced') : t('tg.accounts.showAdvanced')}
       </button>
 
@@ -772,6 +782,20 @@ function AddAccountForm({ onDone, onCancel }: { onDone: () => void; onCancel: ()
   );
 }
 
+/** A distinct gradient per account, deterministic from its id -- same treatment as group avatars elsewhere in the app. */
+const ACCOUNT_GRADIENTS: [string, string][] = [
+  ['#6366f1', '#8b5cf6'],
+  ['#06b6d4', '#3b82f6'],
+  ['#f43f5e', '#ec4899'],
+  ['#f59e0b', '#f97316'],
+  ['#22c55e', '#10b981'],
+];
+function accountGradient(id: string): [string, string] {
+  let hash = 0;
+  for (let i = 0; i < id.length; i += 1) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  return ACCOUNT_GRADIENTS[hash % ACCOUNT_GRADIENTS.length];
+}
+
 function AccountRow({ account, onChanged, onRemove }: { account: TelegramAccount; onChanged: () => void; onRemove: () => void }) {
   const { t } = useLanguage();
   const [connecting, setConnecting] = useState(false);
@@ -780,6 +804,7 @@ function AccountRow({ account, onChanged, onRemove }: { account: TelegramAccount
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [from, to] = accountGradient(account.id);
 
   const handleConnect = async () => {
     setError('');
@@ -815,27 +840,64 @@ function AccountRow({ account, onChanged, onRemove }: { account: TelegramAccount
     }
   };
 
+  const handleLogout = async () => {
+    setError('');
+    setConnecting(true);
+    try {
+      await logoutTelegramAccount(account.id);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('tg.accounts.errLogout'));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const displayName = [account.account_first_name, account.account_last_name].filter(Boolean).join(' ');
+
   return (
-    <div className="rounded-lg border border-dark-700/60 bg-dark-800/40 p-3">
+    <div className="group relative overflow-hidden rounded-xl border border-dark-700/60 bg-dark-800/40 p-3 transition-colors hover:border-dark-600">
       <div className="flex items-center gap-3">
-        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${account.connected ? 'bg-success-500/20' : 'bg-dark-800'}`}>
-          <User className={`h-4 w-4 ${account.connected ? 'text-success-400' : 'text-dark-500'}`} />
+        <div
+          className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white shadow-md"
+          style={{ background: `linear-gradient(135deg, ${from}, ${to})` }}
+        >
+          {account.label.charAt(0).toUpperCase()}
+          {account.connected && (
+            <span className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border-2 border-dark-900 bg-success-500">
+              <CheckCircle2 className="h-2 w-2 text-white" />
+            </span>
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-white">{account.label}</p>
-          <p className="truncate text-[11px] text-dark-500">
-            {account.account_username ? `@${account.account_username}` : account.phone || '—'}
-          </p>
+          {account.connected ? (
+            <p className="flex items-center gap-1.5 truncate text-[11px] text-dark-500">
+              {displayName || account.account_username || '—'}
+              {account.account_user_id && (
+                <span className="flex items-center gap-0.5 font-mono text-dark-600">
+                  <Fingerprint className="h-2.5 w-2.5" /> {account.account_user_id}
+                </span>
+              )}
+            </p>
+          ) : (
+            <p className="truncate text-[11px] text-dark-500">{account.phone || '—'}</p>
+          )}
         </div>
         {account.connected ? (
-          <span className="flex shrink-0 items-center gap-1.5 rounded-lg bg-success-500/10 px-2.5 py-1 text-[11px] font-medium text-success-400">
-            <CheckCircle2 className="h-3.5 w-3.5" /> {t('tg.accounts.connected')}
-          </span>
+          <button
+            onClick={handleLogout}
+            disabled={connecting}
+            title={t('tg.accounts.logout')}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-dark-800 px-3 py-1.5 text-[11px] font-medium text-dark-300 transition-colors hover:bg-warning-500/15 hover:text-warning-400 disabled:opacity-50"
+          >
+            {connecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogOut className="h-3.5 w-3.5" />} {t('tg.accounts.logout')}
+          </button>
         ) : !awaitingCode ? (
           <button
             onClick={handleConnect}
             disabled={connecting}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-success-500 px-3 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-success-600 disabled:opacity-50"
+            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-gradient-to-r from-success-500 to-success-600 px-3 py-1.5 text-[11px] font-medium text-white shadow-sm transition-all hover:brightness-110 disabled:opacity-50"
           >
             {connecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} {t('tg.accounts.connect')}
           </button>
@@ -843,7 +905,7 @@ function AccountRow({ account, onChanged, onRemove }: { account: TelegramAccount
         <button
           onClick={onRemove}
           title={t('tg.accounts.remove')}
-          className="shrink-0 rounded-lg p-1.5 text-dark-600 transition-colors hover:bg-error-500/20 hover:text-error-400"
+          className="shrink-0 rounded-lg p-1.5 text-dark-600 opacity-60 transition-colors hover:bg-error-500/20 hover:text-error-400 group-hover:opacity-100"
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
