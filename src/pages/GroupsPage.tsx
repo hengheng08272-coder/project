@@ -27,6 +27,7 @@ import {
   Info,
   Sparkles,
   Video,
+  PlayCircle,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { backendConfigured, callBackend, r2DownloadUrl, telegramStorageDownloadUrl } from '@/lib/backend';
@@ -1062,6 +1063,8 @@ function EpisodeBrowser({
   const { t } = useLanguage();
   const title = isNoTopicBucket ? t('groups.videosWithoutTopic') : topic?.title ?? group.title;
   const selectedSize = episodes.filter((e) => selected.has(e.id)).reduce((sum, e) => sum + (e.file_size || 0), 0);
+  const [copiedAll, setCopiedAll] = useState(false);
+  const [previewItem, setPreviewItem] = useState<Episode | null>(null);
 
   return (
     <div className="space-y-4 animate-slide-up">
@@ -1151,6 +1154,21 @@ function EpisodeBrowser({
         >
           {t('groups.selectNotInR2')}
         </button>
+        {episodes.some((e) => e.r2_url) && (
+          <button
+            onClick={() => {
+              const urls = episodes.map((e) => e.r2_url).filter(Boolean).join('\n');
+              navigator.clipboard?.writeText(urls);
+              setCopiedAll(true);
+              setTimeout(() => setCopiedAll(false), 1500);
+            }}
+            title={t('groups.copyAllUrlsTitle')}
+            className="flex items-center gap-1.5 rounded-lg bg-dark-800 px-3 py-1.5 text-[11px] font-medium text-dark-300 transition-colors hover:bg-dark-700 hover:text-white"
+          >
+            {copiedAll ? <Check className="h-3.5 w-3.5 text-success-400" /> : <Copy className="h-3.5 w-3.5" />}
+            {t('groups.copyAllUrls')}
+          </button>
+        )}
         <span className="ml-auto text-[11px] text-dark-500">
           {t('groups.shownCount').replace('{n}', String(episodes.length))}
         </span>
@@ -1272,11 +1290,48 @@ function EpisodeBrowser({
                     )}
                   </div>
                 </div>
+                {ep.status === 'completed' && isPreviewableUrl(ep.r2_url) && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setPreviewItem(ep); }}
+                    title={t('groups.preview')}
+                    className="shrink-0 rounded-lg p-1.5 text-dark-500 transition-colors hover:bg-dark-700 hover:text-white"
+                  >
+                    <PlayCircle className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             );
           })}
         </div>
       )}
+      {previewItem && <EpisodePreviewModal episode={previewItem} onClose={() => setPreviewItem(null)} />}
+    </div>
+  );
+}
+
+/** True for a downloaded file the browser can play inline. */
+function isPreviewableUrl(url: string | null): url is string {
+  if (!url) return false;
+  return /\.(mp4|webm|mov|m4v|mp3|m4a|wav|ogg)(\?|$)/i.test(url);
+}
+
+function EpisodePreviewModal({ episode, onClose }: { episode: Episode; onClose: () => void }) {
+  const isAudio = episode.media_type === 'audio' || /\.(mp3|m4a|wav|ogg)(\?|$)/i.test(episode.r2_url || '');
+  return (
+    <div className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-2xl rounded-2xl border border-dark-700 bg-dark-900 p-4 animate-slide-up" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex items-center justify-between">
+          <p className="truncate pr-4 text-sm font-medium text-white">{episode.title || episode.file_name}</p>
+          <button onClick={onClose} className="shrink-0 rounded-lg p-1.5 text-dark-500 transition-colors hover:bg-dark-800 hover:text-white">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        {isAudio ? (
+          <audio src={episode.r2_url ?? undefined} controls autoPlay className="w-full" />
+        ) : (
+          <video src={episode.r2_url ?? undefined} controls autoPlay className="max-h-[70vh] w-full rounded-lg bg-black" />
+        )}
+      </div>
     </div>
   );
 }
