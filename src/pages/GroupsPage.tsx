@@ -30,7 +30,7 @@ import {
   PlayCircle,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { backendConfigured, callBackend, r2DownloadUrl, telegramStorageDownloadUrl } from '@/lib/backend';
+import { backendConfigured, callBackend, episodeThumbnailUrl, r2DownloadUrl, telegramStorageDownloadUrl } from '@/lib/backend';
 import { useLanguage, type TranslationKey } from '@/lib/i18n';
 import type { Episode, Group, Topic } from '@/lib/types';
 import { formatBytes, formatTimeAgo, getStatusColor } from '@/lib/utils';
@@ -520,6 +520,28 @@ function Breadcrumb({ group, topicLabel, onHome, onGroup }: {
  * Content-Disposition: attachment, so it saves to the device even when the
  * bucket has no public URL configured at all.
  */
+/**
+ * The episode grid's thumbnail box. A stored thumbnail_url is shown as-is;
+ * otherwise, for a video that hasn't been downloaded yet, it asks the
+ * backend for a preview straight from Telegram's own message thumbnail
+ * (episodeThumbnailUrl) so there's something to look at before committing to
+ * a download -- falling back to a plain icon if that request 404s (no
+ * message, no thumb, or no backend configured at all).
+ */
+function EpisodeThumb({ episode }: { episode: Episode }) {
+  const [failed, setFailed] = useState(false);
+  const src = episode.thumbnail_url || (backendConfigured && !failed ? episodeThumbnailUrl(episode.id) : '');
+
+  if (src) {
+    return <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} className="h-full w-full object-cover" />;
+  }
+  return episode.media_type === 'audio' ? (
+    <Music className="h-5 w-5 text-dark-500" />
+  ) : (
+    <Film className="h-5 w-5 text-dark-500" />
+  );
+}
+
 function EpisodeUrlBadge({ url, downloadUrl }: { url: string | null; downloadUrl: string }) {
   const { t } = useLanguage();
   const [copied, setCopied] = useState(false);
@@ -1306,13 +1328,7 @@ function EpisodeBrowser({
                   {isSelected && <CheckCircle2 className="h-3.5 w-3.5 text-white" />}
                 </div>
                 <div className="flex h-12 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-dark-800/60">
-                  {ep.thumbnail_url ? (
-                    <img src={ep.thumbnail_url} alt="" className="h-full w-full object-cover" />
-                  ) : ep.media_type === 'audio' ? (
-                    <Music className="h-5 w-5 text-dark-500" />
-                  ) : (
-                    <Film className="h-5 w-5 text-dark-500" />
-                  )}
+                  <EpisodeThumb episode={ep} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">

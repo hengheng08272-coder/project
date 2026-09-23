@@ -202,6 +202,20 @@ export function r2DownloadUrl(key: string, filename?: string): string {
 }
 
 /**
+ * A still preview of an episode's video -- fetched from Telegram's own
+ * message thumbnail and cached to R2 on first request -- so it can be shown
+ * before the episode is actually downloaded. Returns '' when no backend is
+ * configured; the caller falls back to a generic file icon in that case.
+ */
+export function episodeThumbnailUrl(episodeId: string): string {
+  if (!BACKEND_URL) return '';
+  const params = new URLSearchParams();
+  if (BACKEND_KEY) params.set('api_key', BACKEND_KEY);
+  const query = params.toString();
+  return `${BACKEND_URL}/api/episodes/${episodeId}/thumbnail${query ? `?${query}` : ''}`;
+}
+
+/**
  * The equivalent of {@link r2DownloadUrl} for an episode archived to a
  * Telegram storage channel instead of R2 -- the backend re-fetches it from
  * Telegram on every call, since there is no static URL for it.
