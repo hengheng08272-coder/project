@@ -139,6 +139,8 @@ export interface UrlListItem {
   r2_url: string | null;
   file_size: number | null;
   error: string | null;
+  /** yt-dlp download percentage (0-99) while status is 'downloading'; null otherwise or for the plain-fetch path, which has no percentage to report. */
+  progress: number | null;
   created_at: string;
   updated_at: string | null;
 }

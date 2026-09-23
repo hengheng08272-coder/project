@@ -572,13 +572,23 @@ export function UrlListsPage() {
                           {item.status === 'failed' && item.error && (
                             <p className="text-[10px] text-error-400 break-words" title={item.error}>{item.error}</p>
                           )}
+                          {item.status === 'downloading' && typeof item.progress === 'number' && (
+                            <div className="mt-1 h-1 w-full max-w-[160px] rounded-full bg-dark-700 overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-primary-500 transition-all duration-500"
+                                style={{ width: `${item.progress}%` }}
+                              />
+                            </div>
+                          )}
                         </div>
                         {item.file_size ? (
                           <span className="text-[10px] text-dark-500 shrink-0 tabular-nums">{formatBytes(item.file_size)}</span>
                         ) : null}
                         <span className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getStatusColor(item.status)} shrink-0`}>
                           {(item.status === 'downloading' || item.status === 'queued') && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
-                          {item.status === 'downloading' ? 'saving' : item.status}
+                          {item.status === 'downloading'
+                            ? `saving${typeof item.progress === 'number' ? ` ${item.progress}%` : ''}`
+                            : item.status}
                         </span>
                         {item.status === 'completed' && isPreviewable(item.r2_url) && (
                           <button
