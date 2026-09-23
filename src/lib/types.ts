@@ -141,6 +141,10 @@ export interface UrlListItem {
   error: string | null;
   /** yt-dlp download percentage (0-99) while status is 'downloading'; null otherwise or for the plain-fetch path, which has no percentage to report. */
   progress: number | null;
+  /** 'auto' lets the backend decide (direct fetch vs yt-dlp); 'ytdlp' forces yt-dlp; 'direct' forces plain HTTP fetch. */
+  download_mode: 'auto' | 'ytdlp' | 'direct';
+  /** 'best' (default), '720p', '1080p', or 'audio_only' — passed to yt-dlp. */
+  quality_pref: 'best' | '720p' | '1080p' | 'audio_only';
   created_at: string;
   updated_at: string | null;
 }
