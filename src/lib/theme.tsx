@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 export type ThemeMode = 'dark' | 'light' | 'system';
-export type AccentColor = 'blue' | 'violet' | 'emerald' | 'amber';
+export type AccentColor = 'blue' | 'violet' | 'emerald' | 'amber' | 'sky';
 
 const MODE_KEY = 'tg-downloader-theme';
 const ACCENT_KEY = 'tg-downloader-accent';
@@ -11,6 +11,7 @@ export const ACCENTS: { key: AccentColor; label: string; swatch: string }[] = [
   { key: 'violet', label: 'Nebula', swatch: '#8b5cf6' },
   { key: 'emerald', label: 'Forest', swatch: '#10b981' },
   { key: 'amber', label: 'Sunset', swatch: '#f59e0b' },
+  { key: 'sky', label: 'Telegram', swatch: '#229ed9' },
 ];
 
 interface ThemeContextValue {
@@ -39,7 +40,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     readStored(MODE_KEY, ['dark', 'light', 'system'] as const, 'dark')
   );
   const [accent, setAccentState] = useState<AccentColor>(() =>
-    readStored(ACCENT_KEY, ['blue', 'violet', 'emerald', 'amber'] as const, 'blue')
+    readStored(ACCENT_KEY, ['blue', 'violet', 'emerald', 'amber', 'sky'] as const, 'blue')
   );
   const [systemIsLight, setSystemIsLight] = useState(prefersLight);
 

@@ -4,6 +4,17 @@ export interface ParsedUrlItem {
   episode_number: number | null;
   source: 'telegram' | 'youtube' | 'other';
   duplicate: boolean;
+  /** Set once auto-detect resolves this item's real media URL (see UrlListsPage's AutoImportModal). */
+  referer?: string;
+}
+
+/** True when the URL's path already ends in a known media extension -- the same check the backend uses to skip yt-dlp for a link that is obviously a direct file already. */
+export function isDirectFileUrl(url: string): boolean {
+  try {
+    return /\.(mp4|mkv|webm|mov|avi|flv|ts|m4v|mp3|m4a|wav|flac|aac|ogg|m3u8)(\?|$)/i.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
 }
 
 interface ParseOptions {
