@@ -430,6 +430,27 @@ export function searchPublicChats(query: string, limit = 20, accountId?: string 
   return callBackend<{ results: PublicChatResult[] }>('/api/telegram/groups/search', { query, limit, account_id: accountId || undefined });
 }
 
+export interface GroupMember {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  username: string | null;
+  phone: string | null;
+  is_bot: boolean;
+  is_premium: boolean;
+  role: 'owner' | 'admin' | 'member' | 'banned';
+  status: { kind: 'online' | 'offline' | 'recently' | 'last_week' | 'last_month' | 'hidden' | 'unknown'; last_seen?: number | null };
+}
+
+/** Lists a group's members -- read-only, for a "who's in this group" view. */
+export function listGroupMembers(chatId: string, accountId?: string | null, limit = 200) {
+  return callBackend<{ members: GroupMember[] }>('/api/telegram/groups/members', {
+    chat_id: chatId,
+    account_id: accountId || undefined,
+    limit,
+  });
+}
+
 /** Sends a short message to the userbot's own Saved Messages. */
 export function notifySelf(text: string) {
   return callBackend('/api/telegram/notify', { text });

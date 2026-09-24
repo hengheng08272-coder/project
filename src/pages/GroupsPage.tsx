@@ -30,7 +30,7 @@ import {
   PlayCircle,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { backendConfigured, callBackend, episodeThumbnailUrl, r2DownloadUrl, telegramStorageDownloadUrl } from '@/lib/backend';
+import { backendConfigured, callBackend, episodeThumbnailUrl, listGroupMembers, r2DownloadUrl, telegramStorageDownloadUrl, type GroupMember } from '@/lib/backend';
 import { useLanguage, type TranslationKey } from '@/lib/i18n';
 import type { Episode, Group, Topic } from '@/lib/types';
 import { formatBytes, formatTimeAgo, getStatusColor } from '@/lib/utils';
@@ -892,6 +892,7 @@ function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOp
   const untopicked = episodesOf(group.id, NO_TOPIC);
   const totalSize = allEpisodes.reduce((sum, e) => sum + (e.file_size || 0), 0);
   const done = allEpisodes.filter((e) => e.status === 'completed').length;
+  const [showMembers, setShowMembers] = useState(false);
 
   return (
     <div className="space-y-4 animate-slide-up">
@@ -939,6 +940,13 @@ function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOp
                   className="flex items-center gap-2 rounded-lg bg-dark-800 px-4 py-2 text-sm font-medium text-dark-300 transition-colors hover:bg-accent-500 hover:text-white disabled:opacity-40"
                 >
                   <CopyIcon className="h-4 w-4" /> {t('groups.mirrorToNewGroup')}
+                </button>
+                <button
+                  onClick={() => setShowMembers(true)}
+                  title={t('groups.viewMembers')}
+                  className="flex items-center gap-2 rounded-lg bg-dark-800 px-4 py-2 text-sm font-medium text-dark-300 transition-colors hover:bg-accent-500 hover:text-white"
+                >
+                  <Users className="h-4 w-4" /> {t('groups.members')}
                 </button>
                 <div className="flex items-center rounded-lg border border-dark-700 bg-dark-800 p-0.5" title={t('groups.storageBackendTitle')}>
                   <button
@@ -1032,6 +1040,108 @@ function GroupDetail({ group, topics, episodesOf, scanning, onScan, onBack, onOp
             )}
           </div>
         )}
+      </div>
+
+      {showMembers && <MembersModal group={group} onClose={() => setShowMembers(false)} />}
+    </div>
+  );
+}
+
+/** A read-only "who's in this group" view -- lists members via the account assigned to this group. */
+function MembersModal({ group, onClose }: { group: Group; onClose: () => void }) {
+  const { t } = useLanguage();
+  const [members, setMembers] = useState<GroupMember[] | null>(null);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    listGroupMembers(group.chat_id, group.account_id)
+      .then((result) => setMembers(result.members))
+      .catch((err) => setError(err instanceof Error ? err.message : t('groups.errLoadMembers')));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group.id]);
+
+  const filtered = (members ?? []).filter((m) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    const name = [m.first_name, m.last_name, m.username].filter(Boolean).join(' ').toLowerCase();
+    return name.includes(q);
+  });
+
+  const statusLabel = (m: GroupMember) => {
+    switch (m.status.kind) {
+      case 'online': return t('groups.statusOnline');
+      case 'offline': return t('groups.statusOffline');
+      case 'recently': return t('groups.statusRecently');
+      case 'last_week': return t('groups.statusLastWeek');
+      case 'last_month': return t('groups.statusLastMonth');
+      default: return t('groups.statusHidden');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-fade-in" onClick={onClose}>
+      <div
+        className="max-h-[85vh] w-full max-w-lg overflow-hidden rounded-2xl border border-dark-700 bg-dark-900 shadow-2xl shadow-black/40 animate-slide-up"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-dark-800 p-4">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
+            <Users className="h-4 w-4 text-accent-400" /> {t('groups.members')}
+            {members && <span className="text-xs font-normal text-dark-500">{members.length}</span>}
+          </h3>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-dark-500 transition-colors hover:bg-dark-800 hover:text-white">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="border-b border-dark-800 p-3">
+          <div className="flex items-center gap-2 rounded-lg border border-dark-700 bg-dark-800 px-3 py-2">
+            <Search className="h-3.5 w-3.5 text-dark-500" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={t('groups.searchMembers')}
+              className="flex-1 bg-transparent text-sm text-white placeholder-dark-600 outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="max-h-[55vh] space-y-1 overflow-y-auto p-3">
+          {error ? (
+            <p className="flex items-start gap-1.5 py-6 text-center text-xs text-error-400">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {error}
+            </p>
+          ) : !members ? (
+            <div className="flex items-center justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-primary-500" /></div>
+          ) : filtered.length === 0 ? (
+            <p className="py-8 text-center text-xs text-dark-600">{t('groups.noMemberMatch')}</p>
+          ) : (
+            filtered.map((m) => {
+              const name = [m.first_name, m.last_name].filter(Boolean).join(' ') || m.username || m.id;
+              return (
+                <div key={m.id} className="flex items-center gap-3 rounded-lg p-2 hover:bg-dark-800/60">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary-500/30 to-accent-500/30">
+                    <span className="text-xs font-bold text-white">{name.charAt(0).toUpperCase()}</span>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <p className="truncate text-sm font-medium text-white">{name}</p>
+                      {m.role === 'owner' && <span className="shrink-0 rounded bg-warning-500/15 px-1.5 py-0.5 text-[9px] font-medium text-warning-400">{t('groups.roleOwner')}</span>}
+                      {m.role === 'admin' && <span className="shrink-0 rounded bg-accent-500/15 px-1.5 py-0.5 text-[9px] font-medium text-accent-400">{t('groups.roleAdmin')}</span>}
+                      {m.is_bot && <span className="shrink-0 rounded bg-dark-700 px-1.5 py-0.5 text-[9px] font-medium text-dark-300">BOT</span>}
+                    </div>
+                    <p className="truncate text-[11px] text-dark-500">
+                      {m.username ? `@${m.username}` : ''}
+                      {m.username && ' · '}
+                      {statusLabel(m)}
+                    </p>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
       </div>
     </div>
   );
