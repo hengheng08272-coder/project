@@ -146,7 +146,15 @@ function App() {
       case 'downloads':
         return <DownloadsPage />;
       case 'urllists':
-        return <UrlListsPage />;
+        // The URL-list / upload groups moved off the Groups page and sit here,
+        // under the lists they are made of -- one mount of GroupsPage limited
+        // to those groups, so opening one still gets the full video browser.
+        return (
+          <div className="space-y-6">
+            <UrlListsPage />
+            <GroupsPage source="manual" />
+          </div>
+        );
       case 'settings':
         return (
           <SettingsPage

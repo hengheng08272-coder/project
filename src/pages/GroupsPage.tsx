@@ -108,7 +108,17 @@ interface ForwardRequest {
   mode: 'selected' | 'topic';
 }
 
-export function GroupsPage() {
+/**
+ * Which half of the `groups` table a mounted GroupsPage is about.
+ *
+ * 'telegram' is the Groups page proper. 'manual' renders only the URL-list /
+ * upload groups (chat_id "manual:..."), which the Link Lists page mounts
+ * underneath its own lists -- that is where people look for them, next to the
+ * links they came from, rather than mixed into a page about Telegram groups.
+ */
+export type GroupSource = 'telegram' | 'manual';
+
+export function GroupsPage({ source = 'telegram' }: { source?: GroupSource } = {}) {
   const { t } = useLanguage();
   const [groups, setGroups] = useState<Group[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -361,6 +371,9 @@ export function GroupsPage() {
 
   return (
     <div className="space-y-4 animate-fade-in">
+      {/* On the Link Lists mount there is no "Groups" page to be at the top
+          of, so the trail only appears once a list's videos are open. */}
+      {(source === 'telegram' || selectedGroup) && (
       <Breadcrumb
         group={selectedGroup}
         topicLabel={
@@ -369,6 +382,7 @@ export function GroupsPage() {
         onHome={backToGroups}
         onGroup={() => { setSelectedTopicId(null); resetEpisodeFilters(); }}
       />
+      )}
 
       {error && (
         <div className="flex items-start gap-2 rounded-xl border border-error-500/30 bg-error-500/10 px-4 py-3 text-sm text-error-300">
@@ -382,6 +396,7 @@ export function GroupsPage() {
         <div className="flex items-center justify-center py-20"><Loader2 className="w-6 h-6 text-primary-500 animate-spin" /></div>
       ) : !selectedGroup ? (
         <GroupGrid
+          source={source}
           groups={groups}
           topics={topics}
           episodes={episodes}
@@ -617,7 +632,8 @@ function ProgressBar({ done, total }: { done: number; total: number }) {
   );
 }
 
-function GroupGrid({ groups, topics, episodes, onOpen, onDelete, onAdd }: {
+function GroupGrid({ source, groups, topics, episodes, onOpen, onDelete, onAdd }: {
+  source: GroupSource;
   groups: Group[];
   topics: Topic[];
   episodes: Episode[];
@@ -631,6 +647,39 @@ function GroupGrid({ groups, topics, episodes, onOpen, onDelete, onAdd }: {
   const totalVideos = episodes.length;
   const totalDone = episodes.filter((e) => e.status === 'completed').length;
   const totalSize = episodes.reduce((sum, e) => sum + (e.file_size || 0), 0);
+
+  // Mounted under the Link Lists page: only the URL/upload groups, no Telegram
+  // hero and no "Add a group" -- those belong to the Groups page.
+  if (source === 'manual') {
+    return (
+      <div className="animate-slide-up space-y-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-white">
+            <Link2 className="h-4 w-4 text-accent-400" /> {t('urllists.uploadsTitle')}
+            <span className="text-xs font-normal text-dark-500">{manualGroups.length}</span>
+          </h2>
+          <p className="mt-1 text-xs text-dark-500">{t('urllists.uploadsHint')}</p>
+        </div>
+        {manualGroups.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-dark-700 bg-dark-900/40 p-8 text-center text-xs text-dark-500">
+            {t('groups.sourceManualHint')}
+          </div>
+        ) : (
+          <div className="divide-y divide-dark-800 rounded-xl border border-dark-800 bg-dark-900/60">
+            {manualGroups.map((group) => (
+              <ManualGroupRow
+                key={group.id}
+                group={group}
+                episodes={episodes.filter((e) => e.group_id === group.id)}
+                onOpen={() => onOpen(group.id)}
+                onDelete={() => onDelete(group.id, group.title, true)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="animate-slide-up space-y-6">
@@ -701,29 +750,73 @@ function GroupGrid({ groups, topics, episodes, onOpen, onDelete, onAdd }: {
         )}
       </div>
 
-      {/* Manual / URL-sourced groups -- kept visually and physically apart from
-          real Telegram groups above, since they share nothing but the same
-          underlying table (see isManualGroup's comment). */}
-      {manualGroups.length > 0 && (
-        <div>
-          <div className="mb-3 flex items-center gap-2">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-white">
-              <Link2 className="h-4 w-4 text-accent-400" /> {t('groups.sourceManual')}
-              <span className="text-xs font-normal text-dark-500">{manualGroups.length}</span>
-            </h2>
-          </div>
-          <p className="mb-3 text-xs text-dark-500">{t('groups.sourceManualHint')}</p>
-          <div className="divide-y divide-dark-800 rounded-xl border border-dark-800 bg-dark-900/60">
-            {manualGroups.map((group) => (
-              <ManualGroupRow
-                key={group.id}
-                group={group}
-                episodes={episodes.filter((e) => e.group_id === group.id)}
-                onOpen={() => onOpen(group.id)}
-                onDelete={() => onDelete(group.id, group.title, true)}
-              />
-            ))}
-          </div>
+      {/* What used to be the URL lists / upload section lives on the Link
+          Lists page now (GroupsPage source="manual"), next to the links it is
+          made of. This is what a Telegram-groups page actually wants in that
+          space: proof the last scan found something, without opening a group
+          first. */}
+      <LatestVideos groups={telegramGroups} episodes={episodes} onOpen={onOpen} />
+
+    </div>
+  );
+}
+
+/**
+ * The newest videos found anywhere, newest first -- a scan's result is
+ * otherwise invisible until you open the right group and the right topic.
+ * Clicking one opens the group it came from.
+ */
+function LatestVideos({ groups, episodes, onOpen }: {
+  groups: Group[];
+  episodes: Episode[];
+  onOpen: (id: string) => void;
+}) {
+  const { t } = useLanguage();
+  const groupTitles = new Map(groups.map((g) => [g.id, g.title]));
+  const latest = episodes
+    .filter((e) => groupTitles.has(e.group_id))
+    .slice()
+    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+    .slice(0, 8);
+
+  return (
+    <div>
+      <div className="mb-3 flex items-baseline justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-white">
+          <Sparkles className="h-4 w-4 text-accent-400" /> {t('groups.latestTitle')}
+        </h2>
+        <p className="truncate text-[11px] text-dark-500">{t('groups.latestHint')}</p>
+      </div>
+      {latest.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-dark-700 bg-dark-900/40 p-8 text-center text-xs text-dark-500">
+          {t('groups.latestEmpty')}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {latest.map((episode) => (
+            <button
+              key={episode.id}
+              onClick={() => onOpen(episode.group_id)}
+              className="card-hover overflow-hidden rounded-xl border border-dark-800 bg-dark-900/60 text-left transition-colors hover:border-dark-700"
+            >
+              <div className="flex aspect-video items-center justify-center bg-dark-800/60">
+                <EpisodeThumb episode={episode} />
+              </div>
+              <div className="p-2.5">
+                <p className="truncate text-xs font-medium text-white">
+                  {episode.title || episode.file_name || '—'}
+                </p>
+                <p className="mt-0.5 flex items-center gap-1.5 truncate text-[10px] text-dark-500">
+                  {episode.ep_number != null && (
+                    <span className="rounded bg-dark-800 px-1 py-0.5 font-medium text-dark-300">
+                      EP {episode.ep_number}
+                    </span>
+                  )}
+                  <span className="truncate">{groupTitles.get(episode.group_id)}</span>
+                </p>
+              </div>
+            </button>
+          ))}
         </div>
       )}
     </div>

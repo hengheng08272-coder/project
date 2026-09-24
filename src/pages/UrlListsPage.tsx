@@ -14,10 +14,6 @@ import {
   FileText,
   Send,
   Youtube,
-  Facebook,
-  Instagram,
-  Twitter,
-  Twitch,
   AlertTriangle,
   Loader2,
   Cloud,
@@ -29,49 +25,12 @@ import {
   ShieldAlert,
   Wand2,
 } from 'lucide-react';
+import { SupportedSourcesBadge } from '@/components/SupportedSources';
 import { supabase } from '@/lib/supabase';
 import { backendConfigured, checkUrl, r2DownloadUrl, resolvePageUrl, saveUrlItemsToR2, saveUrlListToR2 } from '@/lib/backend';
 import type { UrlList, UrlListItem } from '@/lib/types';
 import { formatBytes, getStatusColor } from '@/lib/utils';
 import { parseUrls, getSourceColor, isDirectFileUrl, type ParsedUrlItem } from '@/lib/urlParser';
-
-/**
- * Shown near every "paste a link" entry point so it's visible at a glance
- * that this isn't limited to Telegram or a handful of sites -- yt-dlp's
- * generic extractor (pageResolve.js / ytdlp.js on the backend) resolves and
- * downloads from any of these plus ~1800 other sites, direct .mp4/.m3u8
- * links included.
- */
-function SupportedSourcesBadge() {
-  const platforms: { icon: typeof Youtube; label: string; color: string }[] = [
-    { icon: Youtube, label: 'YouTube', color: 'text-error-400' },
-    { icon: Facebook, label: 'Facebook', color: 'text-primary-400' },
-    { icon: Instagram, label: 'Instagram', color: 'text-accent-400' },
-    { icon: Twitter, label: 'Twitter / X', color: 'text-dark-200' },
-    { icon: Twitch, label: 'Twitch', color: 'text-accent-500' },
-    { icon: Send, label: 'Telegram', color: 'text-accent-400' },
-  ];
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {platforms.map(({ icon: Icon, label, color }) => (
-        <span
-          key={label}
-          title={label}
-          className="flex h-6 w-6 items-center justify-center rounded-md border border-dark-700 bg-dark-800/60"
-        >
-          <Icon className={`h-3.5 w-3.5 ${color}`} />
-        </span>
-      ))}
-      <span
-        title="TikTok"
-        className="flex h-6 items-center justify-center rounded-md border border-dark-700 bg-dark-800/60 px-1.5 text-[9px] font-bold text-dark-200"
-      >
-        TikTok
-      </span>
-      <span className="ml-1 text-[10px] font-medium text-dark-500">+ ~1800 sites, or any direct .mp4/.m3u8 link</span>
-    </div>
-  );
-}
 
 const COLORS = [
   { name: 'blue', class: 'from-primary-500 to-primary-600', text: 'text-primary-400', bg: 'bg-primary-500/10', glow: 'hover:shadow-[0_0_28px_-10px_theme(colors.primary.500)]' },
@@ -110,12 +69,6 @@ export function UrlListsPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [previewItem, setPreviewItem] = useState<UrlListItem | null>(null);
-  const [quickUrl, setQuickUrl] = useState('');
-  const [quickAdding, setQuickAdding] = useState(false);
-  const [quickStatus, setQuickStatus] = useState('');
-  const [quickMode, setQuickMode] = useState<'auto' | 'ytdlp' | 'direct'>('auto');
-  const [quickQuality, setQuickQuality] = useState<'best' | '720p' | '1080p' | 'audio_only'>('best');
-
   const loadData = useCallback(async () => {
     const [lRes, iRes] = await Promise.all([
       supabase.from('url_lists').select('*').order('created_at', { ascending: false }),
@@ -148,34 +101,6 @@ export function UrlListsPage() {
     }
   };
 
-  const QUICK_LIST_TITLE = 'Quick Downloads';
-
-  /**
-   * Quick Download sits above the list picker and works with nothing
-   * selected yet: the first paste reuses (or creates) a "Quick Downloads"
-   * list and switches to it, so pasting a link is never gated on first
-   * creating or picking a list. Returns the id directly instead of relying
-   * on selectedList's state update, which would not be visible yet to the
-   * same call that triggered it.
-   */
-  const ensureQuickList = async (): Promise<string> => {
-    if (selectedList) return selectedList;
-    const existing = lists.find((l) => l.title === QUICK_LIST_TITLE);
-    if (existing) {
-      setSelectedList(existing.id);
-      return existing.id;
-    }
-    const { data } = await supabase
-      .from('url_lists')
-      .insert({ title: QUICK_LIST_TITLE, description: 'Links added from the Quick Download box', color: 'blue' })
-      .select()
-      .single();
-    const created = data as UrlList;
-    setLists((prev) => [created, ...prev]);
-    setSelectedList(created.id);
-    return created.id;
-  };
-
   const deleteList = async (id: string) => {
     await supabase.from('url_lists').delete().eq('id', id);
     if (selectedList === id) setSelectedList(null);
@@ -204,53 +129,6 @@ export function UrlListsPage() {
     });
     setShowAddItem(false);
     loadData();
-  };
-
-  /**
-   * The one-box, always-visible way to add a link: paste anything (a plain
-   * webpage or a direct file) and press Enter -- or just paste it, since
-   * onPaste below calls this the moment a single link lands in the box, no
-   * Enter needed. A page link (a "watch" page with a video player embedded
-   * in it, not a direct file) is auto-resolved to its real video URL first
-   * (same as the "Find the video link" button in the Add URL modal); a
-   * direct file link is added as typed. Resolving never blocks adding -- if
-   * it fails, the pasted link is saved as-is so yt-dlp can still try it at
-   * download time.
-   *
-   * Takes an optional explicit URL so the paste handler can pass the
-   * clipboard text straight through -- state set by the same paste event
-   * (setQuickUrl) would not be visible yet inside this closure. Needs no
-   * list selected beforehand either -- ensureQuickList() reuses or creates
-   * a "Quick Downloads" list on first use.
-   */
-  const quickAdd = async (urlOverride?: string) => {
-    const url = (urlOverride ?? quickUrl).trim();
-    if (!url || quickAdding) return;
-    setQuickAdding(true);
-    setQuickStatus('');
-    const listId = await ensureQuickList();
-
-    let finalUrl = url;
-    let referer = '';
-    let label = '';
-    const looksLikeDirectFile = /\.(mp4|mkv|webm|mov|avi|flv|ts|m4v|mp3|m4a|wav|flac|aac|ogg|m3u8)(\?|$)/i.test(url);
-
-    if (backendConfigured && !looksLikeDirectFile) {
-      setQuickStatus('Looking for the video link on that page…');
-      try {
-        const result = await resolvePageUrl(url);
-        finalUrl = result.url;
-        referer = result.referer;
-        label = result.title || '';
-      } catch {
-        // Fall back to the raw pasted link -- still worth a try at download time.
-      }
-    }
-
-    await addItem(finalUrl, label, '', referer, quickMode, quickQuality, listId);
-    setQuickUrl('');
-    setQuickStatus('');
-    setQuickAdding(false);
   };
 
   const importUrls = async (parsed: ParsedUrlItem[]) => {
@@ -367,7 +245,7 @@ export function UrlListsPage() {
             <div className="min-w-0">
               <h1 className="text-base font-bold text-white">URL / MP4 / M3U8 Downloader</h1>
               <p className="mb-2 text-xs text-dark-400">Organize episode URLs into lists for batch downloading</p>
-              <SupportedSourcesBadge />
+              <SupportedSourcesBadge compact />
             </div>
           </div>
           <button
@@ -383,71 +261,6 @@ export function UrlListsPage() {
           <HeroStat icon={<Check className="h-3.5 w-3.5" />} value={totalDoneItems} label="Done" color="from-success-500 to-success-600" />
           <HeroStat icon={<Cloud className="h-3.5 w-3.5" />} value={formatBytes(totalSizeAll)} label="Saved" color="from-warning-500 to-warning-600" />
         </div>
-      </div>
-
-      {/* Quick Download -- the fastest path in, and always the first thing on
-          the page: paste a link (or just press Enter) and it's resolved and
-          saved without picking or creating a list first. The first use
-          reuses/creates a "Quick Downloads" list (ensureQuickList); once a
-          list is selected below, new links go there instead. */}
-      <div className="rounded-xl border border-primary-500/30 bg-gradient-to-r from-primary-500/10 to-accent-500/10 p-3">
-        <div className="mb-2 flex items-center gap-2">
-          <Download className="w-4 h-4 text-primary-400" />
-          <p className="text-sm font-semibold text-white">Quick Download</p>
-        </div>
-        <div className="flex items-center gap-2 rounded-xl border border-dark-700 bg-dark-900/60 p-2">
-          <Wand2 className="w-4 h-4 shrink-0 text-primary-400 ml-1" />
-          <input
-            value={quickUrl}
-            onChange={(e) => setQuickUrl(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') quickAdd(); }}
-            onPaste={(e) => {
-              const pasted = e.clipboardData.getData('text').trim();
-              if (!pasted || /[\r\n]/.test(pasted) || !/^https?:\/\//i.test(pasted)) return;
-              setQuickUrl(pasted);
-              setTimeout(() => quickAdd(pasted), 0);
-            }}
-            placeholder="Paste any link here (a webpage, .m3u8, .ts, or direct video link) — it's added automatically…"
-            disabled={quickAdding}
-            className="flex-1 min-w-0 bg-transparent text-sm text-white placeholder-dark-500 outline-none disabled:opacity-60"
-          />
-          <select
-            value={quickMode}
-            onChange={(e) => setQuickMode(e.target.value as 'auto' | 'ytdlp' | 'direct')}
-            title="How should this be downloaded?"
-            className="shrink-0 bg-dark-800 border border-dark-700 rounded-lg px-2 py-1.5 text-[11px] text-dark-200 outline-none focus:border-primary-500"
-          >
-            <option value="auto">Auto</option>
-            <option value="ytdlp">Force yt-dlp</option>
-            <option value="direct">Direct fetch</option>
-          </select>
-          <select
-            value={quickQuality}
-            onChange={(e) => setQuickQuality(e.target.value as 'best' | '720p' | '1080p' | 'audio_only')}
-            title="Video quality preference"
-            className="shrink-0 bg-dark-800 border border-dark-700 rounded-lg px-2 py-1.5 text-[11px] text-dark-200 outline-none focus:border-primary-500"
-          >
-            <option value="best">Best</option>
-            <option value="1080p">1080p</option>
-            <option value="720p">720p</option>
-            <option value="audio_only">Audio only</option>
-          </select>
-          <button
-            onClick={() => quickAdd()}
-            disabled={!quickUrl.trim() || quickAdding}
-            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium transition-colors disabled:opacity-40"
-          >
-            {quickAdding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-            Add
-          </button>
-        </div>
-        <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-dark-500">
-          {quickStatus ? (
-            <><Loader2 className="w-3 h-3 animate-spin text-primary-400" /> {quickStatus}</>
-          ) : (
-            <>Saved to: <span className="font-medium text-dark-300">{currentList?.title || QUICK_LIST_TITLE}</span></>
-          )}
-        </p>
       </div>
 
       {error && (
