@@ -26,7 +26,7 @@ import {
   Wand2,
 } from 'lucide-react';
 import { SupportedSourcesBadge } from '@/components/SupportedSources';
-import { supabase } from '@/lib/supabase';
+import { fetchAll, supabase } from '@/lib/supabase';
 import { backendConfigured, checkUrl, r2DownloadUrl, resolvePageUrl, saveUrlItemsToR2, saveUrlListToR2 } from '@/lib/backend';
 import type { UrlList, UrlListItem } from '@/lib/types';
 import { formatBytes, getStatusColor } from '@/lib/utils';
@@ -70,12 +70,18 @@ export function UrlListsPage() {
   const [notice, setNotice] = useState('');
   const [previewItem, setPreviewItem] = useState<UrlListItem | null>(null);
   const loadData = useCallback(async () => {
-    const [lRes, iRes] = await Promise.all([
+    const [lRes, allItems] = await Promise.all([
       supabase.from('url_lists').select('*').order('created_at', { ascending: false }),
-      supabase.from('url_list_items').select('*').order('episode_number', { ascending: true, nullsFirst: false }),
+      fetchAll<UrlListItem>(() =>
+        supabase
+          .from('url_list_items')
+          .select('*')
+          .order('episode_number', { ascending: true, nullsFirst: false })
+          .order('id')
+      ),
     ]);
     setLists((lRes.data as UrlList[]) || []);
-    setItems((iRes.data as UrlListItem[]) || []);
+    setItems(allItems);
     setLoading(false);
   }, []);
 

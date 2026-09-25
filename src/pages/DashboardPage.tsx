@@ -22,7 +22,7 @@ import {
 import { ActivityChart, type ActivityPoint } from '@/components/ActivityChart';
 import { AppLogo, TelegramGlyph } from '@/components/Brand';
 import { SupportedSourcesBadge } from '@/components/SupportedSources';
-import { supabase } from '@/lib/supabase';
+import { fetchAll, supabase } from '@/lib/supabase';
 import { useConnectionStatus } from '@/lib/hooks';
 import { backendConfigured, listR2Objects, resolvePageUrl, saveUrlItemsToR2 } from '@/lib/backend';
 import { useLanguage } from '@/lib/i18n';
@@ -83,9 +83,16 @@ export function DashboardPage({
   const status = useConnectionStatus();
 
   const load = useCallback(async () => {
-    const [dlRes, epRes, groupRes, topicRes, recentRes, tgRes, listRes, itemRes] = await Promise.all([
+    // The two big tables are paged: one request stops at 1000 rows, which used
+    // to cap "videos found" at exactly 1000 however many had really been found.
+    const [dlRes, episodes, groupRes, topicRes, recentRes, tgRes, listRes, items] = await Promise.all([
       supabase.from('downloads').select('id, status, completed_at'),
-      supabase.from('episodes').select('id, group_id, status, file_size, r2_key, media_type, file_name, mime_type'),
+      fetchAll<Episode>(() =>
+        supabase
+          .from('episodes')
+          .select('id, group_id, status, file_size, r2_key, media_type, file_name, mime_type')
+          .order('id')
+      ),
       supabase.from('groups').select('*'),
       supabase.from('topics').select('id'),
       supabase
@@ -95,14 +102,14 @@ export function DashboardPage({
         .limit(6),
       supabase.from('telegram_settings').select('*').maybeSingle(),
       supabase.from('url_lists').select('id'),
-      supabase.from('url_list_items').select('id, url, status, file_size, r2_key, quality_pref'),
+      fetchAll<UrlListItem>(() =>
+        supabase.from('url_list_items').select('id, url, status, file_size, r2_key, quality_pref').order('id')
+      ),
     ]);
 
     const downloads = (dlRes.data as Pick<Download, 'id' | 'status' | 'completed_at'>[]) || [];
-    const episodes = (epRes.data as Episode[]) || [];
     const groups = (groupRes.data as Group[]) || [];
     const lists = (listRes.data as UrlList[]) || [];
-    const items = (itemRes.data as UrlListItem[]) || [];
 
     setStats({
       groups: groups.length,

@@ -64,6 +64,24 @@ export interface ResolvedGroupInfo {
 }
 
 /** Looks a Telegram chat up by ID so the UI can confirm it before using it. */
+export interface ScanResult {
+  success: boolean;
+  messages_scanned: number;
+  topics: number;
+  new_episodes: number;
+  total_episodes: number;
+}
+
+/**
+ * Walks a group's whole history and syncs its topics and videos. The counts
+ * come back so the page can say what the scan actually did -- "finished" alone
+ * left no way to tell a scan that read 12,000 messages from one that stopped
+ * early.
+ */
+export function scanGroup(groupId: string) {
+  return callBackend<ScanResult>(`/api/telegram/groups/${groupId}/scan`);
+}
+
 export async function resolveGroup(chatId: string, accountId?: string | null): Promise<ResolvedGroupInfo> {
   const result = await callBackend<{
     title: string;

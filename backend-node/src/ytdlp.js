@@ -82,7 +82,7 @@ function formatForQuality(quality) {
 /** Runs yt-dlp once, resolving with its outcome instead of throwing, so the caller can decide whether to retry. */
 function runOnce(sourceUrl, referer, outputPath, onProgress, quality) {
   const format = formatForQuality(quality || "best");
-  const isAudioOnly = (quality || "best")  === "audio_only";
+  const isAudioOnly = (quality || "best") === "audio_only";
   return new Promise((resolve) => {
     const args = [
       "--no-check-certificate",

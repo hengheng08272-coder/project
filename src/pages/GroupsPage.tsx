@@ -29,8 +29,8 @@ import {
   Video,
   PlayCircle,
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
-import { backendConfigured, callBackend, episodeThumbnailUrl, listGroupMembers, r2DownloadUrl, telegramStorageDownloadUrl, type GroupMember } from '@/lib/backend';
+import { fetchAll, supabase } from '@/lib/supabase';
+import { backendConfigured, callBackend, episodeThumbnailUrl, listGroupMembers, r2DownloadUrl, scanGroup, telegramStorageDownloadUrl, type GroupMember } from '@/lib/backend';
 import { useLanguage, type TranslationKey } from '@/lib/i18n';
 import type { Episode, Group, Topic } from '@/lib/types';
 import { formatBytes, formatTimeAgo, getStatusColor } from '@/lib/utils';
@@ -144,15 +144,19 @@ export function GroupsPage({ source = 'telegram' }: { source?: GroupSource } = {
   const lastToggledId = useRef<string | null>(null);
 
   const loadData = useCallback(async () => {
-    const [gRes, tRes, eRes, r2Res] = await Promise.all([
+    const [gRes, tRes, allEpisodes, r2Res] = await Promise.all([
       supabase.from('groups').select('*').order('created_at', { ascending: false }),
       supabase.from('topics').select('*').order('title', { ascending: true }),
-      supabase.from('episodes').select('*').order('ep_number', { ascending: true }),
+      // Paged: a big group has well over the 1000 rows one request returns,
+      // and the videos past that point used to simply not exist for this page.
+      fetchAll<Episode>(() =>
+        supabase.from('episodes').select('*').order('ep_number', { ascending: true }).order('id')
+      ),
       supabase.from('r2_settings').select('connected').maybeSingle(),
     ]);
     setGroups((gRes.data as Group[]) || []);
     setTopics((tRes.data as Topic[]) || []);
-    setEpisodes((eRes.data as Episode[]) || []);
+    setEpisodes(allEpisodes);
     setR2Connected(Boolean((r2Res.data as { connected?: boolean } | null)?.connected));
     setLoading(false);
   }, []);
@@ -241,8 +245,13 @@ export function GroupsPage({ source = 'telegram' }: { source?: GroupSource } = {
     setScanning(true);
     setError('');
     try {
-      await callBackend(`/api/telegram/groups/${groupId}/scan`);
-      setToast(t('groups.scanFinished'));
+      const result = await scanGroup(groupId);
+      setToast(
+        t('groups.scanSummary')
+          .replace('{m}', (result.messages_scanned ?? 0).toLocaleString())
+          .replace('{n}', String(result.new_episodes ?? 0))
+          .replace('{t}', (result.total_episodes ?? 0).toLocaleString())
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : t('groups.scanFailed'));
     }

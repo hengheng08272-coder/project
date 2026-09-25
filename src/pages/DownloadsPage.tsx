@@ -11,7 +11,7 @@ import {
   Zap,
   ArrowRight,
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { fetchAll, supabase } from '@/lib/supabase';
 import type { Download, Episode, Group } from '@/lib/types';
 import { formatBytes, formatSpeed, getStatusColor } from '@/lib/utils';
 
@@ -22,13 +22,15 @@ export function DownloadsPage() {
   const [simulating, setSimulating] = useState(false);
 
   const loadDownloads = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('downloads')
-      .select('*, episode:episodes(*, group:groups(*))')
-      .order('created_at', { ascending: false });
-    if (!error && data) {
-      setDownloads(data as (Download & { episode?: Episode; group?: Group })[]);
-    }
+    // Paged -- one request tops out at 1000 rows, and a busy queue passes that.
+    const all = await fetchAll<Download & { episode?: Episode; group?: Group }>(() =>
+      supabase
+        .from('downloads')
+        .select('*, episode:episodes(*, group:groups(*))')
+        .order('created_at', { ascending: false })
+        .order('id')
+    );
+    setDownloads(all);
     setLoading(false);
   }, []);
 
