@@ -29,6 +29,7 @@ import {
   Video,
   PlayCircle,
 } from 'lucide-react';
+import { findEpisodeGaps, formatNumberRanges } from '@/lib/episodeGaps';
 import { fetchAll, supabase } from '@/lib/supabase';
 import { backendConfigured, callBackend, episodeThumbnailUrl, listGroupMembers, r2DownloadUrl, scanGroup, telegramStorageDownloadUrl, type GroupMember } from '@/lib/backend';
 import { useLanguage, type TranslationKey } from '@/lib/i18n';
@@ -436,6 +437,7 @@ export function GroupsPage({ source = 'telegram' }: { source?: GroupSource } = {
           topic={selectedTopic}
           isNoTopicBucket={selectedTopicId === NO_TOPIC}
           episodes={filteredEpisodes}
+          topicEpisodes={topicEpisodes}
           totalInTopic={topicEpisodes.length}
           selected={selectedEpisodes}
           onToggle={toggleEpisode}
@@ -1170,6 +1172,32 @@ function MembersModal({ group, onClose }: { group: Group; onClose: () => void })
     return name.includes(q);
   });
 
+  /**
+   * The member list as a spreadsheet. An admin who wants to cross-check who is
+   * still in the VIP group, or keep a record of it before a cleanup, otherwise
+   * has to copy names out of this list by hand.
+   */
+  const exportCsv = () => {
+    const cell = (value: string | number | boolean | null | undefined) =>
+      `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const header = ['id', 'first_name', 'last_name', 'username', 'phone', 'role', 'status', 'is_bot', 'is_premium'];
+    const body = (members ?? []).map((m) =>
+      [m.id, m.first_name, m.last_name, m.username, m.phone, m.role, m.status.kind, m.is_bot, m.is_premium]
+        .map(cell)
+        .join(',')
+    );
+    // The BOM keeps Khmer names readable when the file is opened in Excel.
+    const blob = new Blob(['\ufeff' + [header.join(','), ...body].join('\n')], {
+      type: 'text/csv;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${group.title.replace(/[^\w\u1780-\u17ff-]+/g, '_').slice(0, 60)}-members.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const statusLabel = (m: GroupMember) => {
     switch (m.status.kind) {
       case 'online': return t('groups.statusOnline');
@@ -1192,9 +1220,19 @@ function MembersModal({ group, onClose }: { group: Group; onClose: () => void })
             <Users className="h-4 w-4 text-accent-400" /> {t('groups.members')}
             {members && <span className="text-xs font-normal text-dark-500">{members.length}</span>}
           </h3>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-dark-500 transition-colors hover:bg-dark-800 hover:text-white">
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            {members && members.length > 0 && (
+              <button
+                onClick={exportCsv}
+                className="flex items-center gap-1.5 rounded-lg bg-dark-800 px-2.5 py-1.5 text-[11px] font-medium text-dark-300 transition-colors hover:bg-dark-700 hover:text-white"
+              >
+                <Download className="h-3.5 w-3.5" /> {t('groups.exportMembers')}
+              </button>
+            )}
+            <button onClick={onClose} className="rounded-lg p-1.5 text-dark-500 transition-colors hover:bg-dark-800 hover:text-white">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         <div className="border-b border-dark-800 p-3">
@@ -1249,6 +1287,52 @@ function MembersModal({ group, onClose }: { group: Group; onClose: () => void })
   );
 }
 
+/**
+ * "Missing EP 12, 45-47" for a topic -- the one thing a series admin cannot
+ * see by scrolling a few hundred videos, worked out from ep_number alone.
+ * Silent when a topic has no numbered episodes to reason about.
+ */
+function EpisodeGapNote({ episodes, className = '' }: { episodes: Episode[]; className?: string }) {
+  const { t } = useLanguage();
+  const report = findEpisodeGaps(episodes);
+  if (report.first == null) return null;
+
+  const notes: { text: string; tone: string }[] = [];
+  if (report.missing.length > 0) {
+    notes.push({
+      text: t('groups.gapsMissing').replace('{list}', formatNumberRanges(report.missing)),
+      tone: 'text-warning-400',
+    });
+  } else {
+    notes.push({
+      text: t('groups.gapsComplete')
+        .replace('{first}', String(report.first))
+        .replace('{last}', String(report.last)),
+      tone: 'text-success-400',
+    });
+  }
+  if (report.repeated.length > 0) {
+    notes.push({
+      text: t('groups.gapsRepeated').replace('{list}', formatNumberRanges(report.repeated, 3)),
+      tone: 'text-dark-500',
+    });
+  }
+  if (report.unnumbered > 0) {
+    notes.push({
+      text: t('groups.gapsUnnumbered').replace('{n}', String(report.unnumbered)),
+      tone: 'text-dark-500',
+    });
+  }
+
+  return (
+    <p className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] ${className}`}>
+      {notes.map((note) => (
+        <span key={note.text} className={note.tone}>{note.text}</span>
+      ))}
+    </p>
+  );
+}
+
 function TopicCard({ title, episodes, muted, canForward = true, onOpen, onDownload, onForward }: {
   title: string;
   episodes: Episode[];
@@ -1288,6 +1372,7 @@ function TopicCard({ title, episodes, muted, canForward = true, onOpen, onDownlo
             <span className="flex items-center gap-1 text-success-400"><Cloud className="h-3 w-3" /> {t('groups.inR2Count').replace('{n}', String(inR2))}</span>
           )}
         </div>
+        <EpisodeGapNote episodes={episodes} className="mt-1.5" />
       </button>
 
       <div className="mt-3 flex items-center gap-2 border-t border-dark-800 pt-3">
@@ -1317,6 +1402,8 @@ interface EpisodeBrowserProps {
   topic: Topic | null;
   isNoTopicBucket: boolean;
   episodes: Episode[];
+  /** Every video in this topic, before the filters above narrow it down. */
+  topicEpisodes: Episode[];
   totalInTopic: number;
   selected: Set<string>;
   onToggle: (id: string, shiftKey?: boolean) => void;
@@ -1342,7 +1429,7 @@ interface EpisodeBrowserProps {
 }
 
 function EpisodeBrowser({
-  group, topic, isNoTopicBucket, episodes, totalInTopic, selected, onToggle,
+  group, topic, isNoTopicBucket, episodes, topicEpisodes, totalInTopic, selected, onToggle,
   allVisibleSelected, onToggleAll, onSelectNotDownloaded, onSelectNotInR2, onClearSelection,
   statusFilter, onStatusFilter, search, onSearch, epFrom, epTo, onEpFrom, onEpTo,
   scanning, r2Connected, onScan, onBack, onQueue, onForward,
@@ -1376,6 +1463,7 @@ function EpisodeBrowser({
                 <span className="ml-2 text-dark-600">{t('groups.r2NotConnected')}</span>
               )}
             </p>
+            <EpisodeGapNote episodes={topicEpisodes} className="mt-1" />
           </div>
           {!isManualGroup(group) && (
             <button
