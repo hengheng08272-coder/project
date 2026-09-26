@@ -669,42 +669,134 @@ function AccountsSection() {
 }
 
 /**
+ * Add an account and sign it in, in one go.
+ *
+ * This used to stop after saving the row: the account appeared in the list
+ * signed out, and connecting it was a separate Connect button, a separate
+ * code, a separate step people did not realise was still owed. Now saving
+ * sends the login code straight away and the same panel asks for it -- phone,
+ * code, done, without leaving the form.
+ *
  * api_id/api_hash identify the application, not the phone number logging in
  * with it -- the same pair the default account already uses works for any
- * other phone number too. So the normal path here only ever asks for a name
- * and a phone number; api_id/api_hash stay behind "Advanced", collapsed by
- * default, for the rare case an operator wants a distinct app credential.
+ * other phone number too. So the normal path only ever asks for a name and a
+ * phone number; those stay behind "Advanced", collapsed, for the rare case an
+ * operator wants a distinct app credential.
  */
 function AddAccountForm({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
   const { t } = useLanguage();
+  const [step, setStep] = useState<'phone' | 'code' | 'password'>('phone');
+  const [accountId, setAccountId] = useState<string | null>(null);
   const [label, setLabel] = useState('');
   const [phone, setPhone] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [apiId, setApiId] = useState('');
   const [apiHash, setApiHash] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
+  /** Saves the account, then asks Telegram for the code without a second click. */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!phone) return;
-    setSaving(true);
+    if (!phone || busy) return;
+    setBusy(true);
     setError('');
     try {
-      await addTelegramAccount({
+      const { account } = await addTelegramAccount({
         label: label || t('tg.accounts.defaultLabel'),
         phone,
         ...(apiId && apiHash ? { api_id: apiId, api_hash: apiHash } : {}),
       });
-      onDone();
+      setAccountId(account.id);
+      await sendAccountCode(account.id);
+      setStep('code');
     } catch (err) {
       setError(err instanceof Error ? err.message : t('tg.accounts.errAdd'));
-      setSaving(false);
+      // The row may already exist even though the code failed to send, so the
+      // list is refreshed either way -- leaving it hidden would look like the
+      // save was lost, and a second attempt would then hit a duplicate.
+      if (accountId) onDone();
+    } finally {
+      setBusy(false);
     }
   };
 
+  const handleVerify = async () => {
+    if (!accountId || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await verifyAccountCode(accountId, code, step === 'password' ? password : undefined);
+      if (result.needsPassword) {
+        setStep('password');
+        return;
+      }
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('tg.errVerifyCode'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inputClass =
+    'w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500';
+
+  if (step !== 'phone') {
+    const onPassword = step === 'password';
+    return (
+      <div className="mb-4 space-y-3 rounded-lg border border-primary-500/30 bg-primary-500/5 p-4">
+        <p className="flex items-center gap-2 text-sm font-medium text-white">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-500/20 text-[11px] font-bold text-primary-300">
+            2
+          </span>
+          {onPassword ? t('tg.placeholder2fa') : t('tg.connectSendCode')}
+        </p>
+        <p className="text-[11px] text-dark-400">
+          {onPassword ? t('tg.twoStepEnabled') : t('tg.enterCodeSentTo').replace('{phone}', phone)}
+        </p>
+        <input
+          value={onPassword ? password : code}
+          onChange={(e) => (onPassword ? setPassword(e.target.value) : setCode(e.target.value.replace(/\D/g, '')))}
+          onKeyDown={(e) => { if (e.key === 'Enter') handleVerify(); }}
+          type={onPassword ? 'password' : 'text'}
+          inputMode={onPassword ? undefined : 'numeric'}
+          placeholder={onPassword ? '••••••••' : '12345'}
+          autoFocus
+          className={inputClass}
+        />
+        {error && (
+          <p className="flex items-start gap-1.5 text-xs text-error-400">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {error}
+          </p>
+        )}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleVerify}
+            disabled={busy || (onPassword ? !password : code.length < 4)}
+            className="flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-50"
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            {t('tg.verifyConnect')}
+          </button>
+          <button type="button" onClick={onDone} className="text-xs text-dark-400 transition-colors hover:text-white">
+            {t('tg.cancel')}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <form onSubmit={handleSubmit} className="mb-4 space-y-3 rounded-lg border border-dark-700 bg-dark-800/40 p-4">
+      <p className="flex items-center gap-2 text-sm font-medium text-white">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-500/20 text-[11px] font-bold text-primary-300">
+          1
+        </span>
+        {t('tg.accounts.addAccount')}
+      </p>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div>
           <label className="mb-1.5 block text-xs font-medium text-dark-400">{t('tg.accounts.labelField')}</label>
@@ -712,7 +804,7 @@ function AddAccountForm({ onDone, onCancel }: { onDone: () => void; onCancel: ()
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder={t('tg.accounts.defaultLabel')}
-            className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
+            className={inputClass}
           />
         </div>
         <div>
@@ -722,7 +814,7 @@ function AddAccountForm({ onDone, onCancel }: { onDone: () => void; onCancel: ()
             onChange={(e) => setPhone(e.target.value)}
             placeholder="+85512345678"
             autoFocus
-            className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
+            className={inputClass}
           />
         </div>
       </div>
@@ -741,12 +833,7 @@ function AddAccountForm({ onDone, onCancel }: { onDone: () => void; onCancel: ()
         <div className="grid grid-cols-1 gap-3 border-t border-dark-700/60 pt-3 md:grid-cols-2">
           <div>
             <label className="mb-1.5 block text-xs font-medium text-dark-400">{t('tg.apiId')}</label>
-            <input
-              value={apiId}
-              onChange={(e) => setApiId(e.target.value)}
-              placeholder="12345678"
-              className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 font-mono text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
-            />
+            <input value={apiId} onChange={(e) => setApiId(e.target.value)} placeholder="12345678" className={`${inputClass} font-mono`} />
           </div>
           <div>
             <label className="mb-1.5 block text-xs font-medium text-dark-400">{t('tg.apiHash')}</label>
@@ -755,7 +842,7 @@ function AddAccountForm({ onDone, onCancel }: { onDone: () => void; onCancel: ()
               value={apiHash}
               onChange={(e) => setApiHash(e.target.value)}
               placeholder="your_api_hash_here"
-              className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5 font-mono text-sm text-white placeholder-dark-600 outline-none transition-colors focus:border-primary-500"
+              className={`${inputClass} font-mono`}
             />
           </div>
         </div>
@@ -769,10 +856,10 @@ function AddAccountForm({ onDone, onCancel }: { onDone: () => void; onCancel: ()
       <div className="flex items-center gap-2">
         <button
           type="submit"
-          disabled={!phone || saving}
+          disabled={!phone || busy}
           className="flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-50"
         >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} {t('tg.accounts.save')}
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {t('tg.connectSendCode')}
         </button>
         <button type="button" onClick={onCancel} className="text-xs text-dark-400 transition-colors hover:text-white">
           {t('tg.cancel')}
