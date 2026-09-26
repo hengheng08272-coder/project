@@ -1,8 +1,8 @@
 From 3571b2247ebf1d859a1fcad6f81f6d5920692dd2 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 26 Sep 2026 12:40:31 +0000
-Subject: [PATCH] Sign in with Telegram, run KH Invoice from the SaveIt KH bot,
- new Home
+Subject: [PATCH 1/2] Sign in with Telegram, run KH Invoice from the SaveIt KH
+ bot, new Home
 
 - Mini App: opened from the bot, the page signs in by itself with Telegram's
   signed initData (first visit creates the account with a 30-day trial).
@@ -1578,6 +1578,480 @@ index 0000000..17c4b56
 +);
 +alter table public.telegram_codes enable row level security;
 +create index if not exists telegram_codes_expires_idx on public.telegram_codes (expires_at);
+-- 
+2.43.0
+
+
+From c62926ad61f999a673bc2d817a2cc4aba84ae7d9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 18:06:23 +0000
+Subject: [PATCH 2/2] 15-day trial, new plans, bot deep links, shop-name
+ prompt, sub-path build
+
+- Trial 15 days; plans 1m $3, 2m $5, 3m $7, 12m $25 (DB check + trigger,
+  PayWay function, web cards, telegram-bridge).
+- The bot opens the Mini App on a screen (?screen=invoice|report|stock|...).
+- Accounts made from Telegram are asked once for their shop name.
+- Paths are base-relative so the app can be served under /invoice/.
+- telegram-bridge: set_name action for the bot's "Shop name" button.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hDCkKwgRj9X8RVpBZAfiZ
+---
+ public/manifest.webmanifest                   |   8 +-
+ public/sw.js                                  |   3 +-
+ src/App.tsx                                   | 118 +++++++++++++++++-
+ src/components/AccountScreen.tsx              |   2 +-
+ src/components/SubscriptionModal.tsx          |  22 ++--
+ src/main.tsx                                  |   2 +-
+ .../create-qr-payment.ts                      |   7 +-
+ supabase/functions/_shared/payway.ts          |   7 +-
+ supabase/functions/telegram-bridge/index.ts   |  20 ++-
+ .../migrations/20260926170000_plans_2m_3m.sql |  32 +++++
+ vite.config.ts                                |   3 +
+ 11 files changed, 193 insertions(+), 31 deletions(-)
+ create mode 100644 supabase/migrations/20260926170000_plans_2m_3m.sql
+
+diff --git a/public/manifest.webmanifest b/public/manifest.webmanifest
+index c8fccfc..12cc80b 100644
+--- a/public/manifest.webmanifest
++++ b/public/manifest.webmanifest
+@@ -2,23 +2,23 @@
+   "name": "KH Invoice",
+   "short_name": "KH Invoice",
+   "description": "Invoices & Business Data Management",
+-  "start_url": "/",
++  "start_url": "./",
+   "display": "standalone",
+   "background_color": "#F7FAFD",
+   "theme_color": "#0C447C",
+   "icons": [
+     {
+-      "src": "/icon-192.png",
++      "src": "icon-192.png",
+       "sizes": "192x192",
+       "type": "image/png"
+     },
+     {
+-      "src": "/icon-512.png",
++      "src": "icon-512.png",
+       "sizes": "512x512",
+       "type": "image/png"
+     },
+     {
+-      "src": "/icon-maskable-512.png",
++      "src": "icon-maskable-512.png",
+       "sizes": "512x512",
+       "type": "image/png",
+       "purpose": "maskable"
+diff --git a/public/sw.js b/public/sw.js
+index b759c02..dc4192f 100644
+--- a/public/sw.js
++++ b/public/sw.js
+@@ -4,7 +4,8 @@
+ // (those change every deploy, so we cache at runtime instead).
+ 
+ const CACHE_NAME = 'kh-invoice-v1';
+-const APP_SHELL = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
++// Relative to this file, so the app works both at / and under a sub-path.
++const APP_SHELL = ['./', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
+ 
+ self.addEventListener('install', (event) => {
+   event.waitUntil(
+diff --git a/src/App.tsx b/src/App.tsx
+index 2257a3e..cbb642e 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -66,7 +66,7 @@ import {
+ 
+ 
+ 
+-const TRIAL_DAYS = 30;
++const TRIAL_DAYS = 15;
+ 
+ const phoneToEmail = (digits: string) => `${digits}@khinvoice.app`;
+ 
+@@ -86,6 +86,7 @@ interface Profile {
+   subscription_expires_at?: string | null;
+   telegram_id?: number | null;
+   telegram_username?: string | null;
++  telegram_first_name?: string | null;
+ }
+ 
+ interface Transaction {
+@@ -637,9 +638,78 @@ export default function App() {
+     }
+     setProfile(p);
+     setCurrentScreen('Home');
++    applyDeepLink();
++    // Accounts made by Telegram start with the person's first name as the
++    // shop name; ask once for the real one.
++    try {
++      const asked = localStorage.getItem(`kh_shop_named_${p.id}`) === '1';
++      if (p.telegram_id && !asked && (!p.business_name || p.business_name === p.telegram_first_name)) {
++        setShopNameDraft('');
++        setShowShopName(true);
++      }
++    } catch {
++      /* storage blocked: skip the prompt */
++    }
+     return true;
+   };
+ 
++  // The bot's buttons open the Mini App on a given screen: ?screen=... in
++  // the URL, or Telegram's start_param. Used once, on the first entry.
++  const deepLinkUsed = useRef(false);
++  const applyDeepLink = () => {
++    if (deepLinkUsed.current) return;
++    deepLinkUsed.current = true;
++    const fromUrl = new URLSearchParams(window.location.search).get('screen');
++    const fromTelegram = (window.Telegram?.WebApp as { initDataUnsafe?: { start_param?: string } } | undefined)
++      ?.initDataUnsafe?.start_param;
++    const target = (fromUrl || fromTelegram || '').toLowerCase();
++    const screens: Record<string, Screen> = {
++      invoices: 'InvoiceOverview',
++      finance: 'Finance',
++      stock: 'Stock',
++      report: 'Report',
++      customer: 'Customer',
++      account: 'Account',
++      debt: 'CustomerDebt',
++      supplier: 'SupplierDebt',
++      category: 'Category',
++    };
++    if (target === 'invoice') {
++      setEditInvoiceId(null);
++      setCurrentScreen('Invoice');
++    } else if (target === 'income' || target === 'expense') {
++      openAddModal(target);
++    } else if (screens[target]) {
++      setCurrentScreen(screens[target]);
++    }
++  };
++
++  const [showShopName, setShowShopName] = useState(false);
++  const [shopNameDraft, setShopNameDraft] = useState('');
++  const [shopNameBusy, setShopNameBusy] = useState(false);
++  const saveShopName = async () => {
++    const name = shopNameDraft.trim();
++    if (!name || !profile) return;
++    setShopNameBusy(true);
++    const { data } = await supabase.from('profiles').update({ business_name: name }).eq('id', profile.id).select().maybeSingle();
++    setShopNameBusy(false);
++    if (data) setProfile(data as Profile);
++    try {
++      localStorage.setItem(`kh_shop_named_${profile.id}`, '1');
++    } catch {
++      /* ignore */
++    }
++    setShowShopName(false);
++  };
++  const skipShopName = () => {
++    try {
++      if (profile) localStorage.setItem(`kh_shop_named_${profile.id}`, '1');
++    } catch {
++      /* ignore */
++    }
++    setShowShopName(false);
++  };
++
+   const refreshProfile = async () => {
+     const { data } = await supabase.auth.getSession();
+     if (!data.session) return;
+@@ -1285,7 +1355,7 @@ export default function App() {
+                 </button>
+               )}
+               <p className="text-[10px] text-center mt-1.5" style={{ color: COLORS.muted }}>
+-                {lang === 'KH' ? '🎁 គណនីថ្មី៖ សាកល្បងឥតគិតថ្លៃ ៣០ ថ្ងៃ · មិនបាច់លេខសម្ងាត់' : '🎁 New here: 30-day free trial · no password needed'}
++                {lang === 'KH' ? '🎁 គណនីថ្មី៖ សាកល្បងឥតគិតថ្លៃ ១៥ ថ្ងៃ · មិនបាច់លេខសម្ងាត់' : '🎁 New here: 15-day free trial · no password needed'}
+               </p>
+ 
+               <div className="flex items-center gap-2 my-3.5">
+@@ -1880,7 +1950,7 @@ export default function App() {
+               className="mx-3.5 mt-2.5 flex items-center gap-2 px-3 py-1.5 rounded-xl"
+               style={{ backgroundColor: '#FFFFFF', boxShadow: '0 2px 8px rgba(12,68,124,0.1)', border: `1px solid ${COLORS.border}` }}
+             >
+-              <img src="/icon-192.png" alt="" className="w-6 h-6 rounded-md flex-shrink-0" />
++              <img src={`${import.meta.env.BASE_URL}icon-192.png`} alt="" className="w-6 h-6 rounded-md flex-shrink-0" />
+               <p className="flex-1 min-w-0 truncate text-[11px] font-semibold" style={{ color: COLORS.navy }}>
+                 {lang === 'KH' ? 'ដំឡើង KH Invoice ជា App' : 'Install KH Invoice App'}
+               </p>
+@@ -2393,7 +2463,7 @@ export default function App() {
+                 onClick={(e) => e.stopPropagation()}
+               >
+                 <div className="flex items-center gap-2 mb-3">
+-                  <img src="/icon-192.png" alt="" className="w-9 h-9 rounded-lg" />
++                  <img src={`${import.meta.env.BASE_URL}icon-192.png`} alt="" className="w-9 h-9 rounded-lg" />
+                   <h3 className="text-base font-bold" style={{ color: COLORS.navy }}>
+                     {lang === 'KH' ? 'ដំឡើង KH Invoice' : 'Install KH Invoice'}
+                   </h3>
+@@ -3042,6 +3112,46 @@ export default function App() {
+         <SupplierDebtScreen lang={lang} onBack={() => setCurrentScreen('Home')} />
+       )}
+ 
++      {showShopName && profile && (
++        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-3" style={{ backgroundColor: 'rgba(8,20,40,0.55)' }}>
++          <div className="w-full max-w-sm bg-white rounded-3xl p-5" style={{ boxShadow: '0 20px 40px rgba(8,47,94,0.3)' }}>
++            <div
++              className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto"
++              style={{ background: `linear-gradient(135deg, ${COLORS.navy}, #1F6FC0)` }}
++            >
++              <Store size={22} color="#FFFFFF" strokeWidth={2.2} />
++            </div>
++            <p className="text-base font-bold text-center mt-3" style={{ color: COLORS.navy }}>
++              {lang === 'KH' ? 'ឈ្មោះហាងរបស់អ្នក' : 'Your shop name'}
++            </p>
++            <p className="text-xs text-center mt-1" style={{ color: COLORS.muted }}>
++              {lang === 'KH' ? 'បង្ហាញលើវិក្កយបត្រ និងរបាយការណ៍ · អាចប្ដូរពេលក្រោយក្នុង គណនី' : 'Shown on invoices and reports · change it later in Account'}
++            </p>
++            <input
++              autoFocus
++              value={shopNameDraft}
++              onChange={(e) => setShopNameDraft(e.target.value)}
++              onKeyDown={(e) => e.key === 'Enter' && saveShopName()}
++              placeholder={lang === 'KH' ? 'ឧ. ហាងកាហ្វេ សុខហេង' : 'e.g. Sokheng Coffee'}
++              maxLength={80}
++              className="w-full mt-4 rounded-xl border px-3 py-3 text-sm outline-none"
++              style={{ borderColor: COLORS.border, backgroundColor: '#FAFAF8', color: COLORS.navy }}
++            />
++            <button
++              onClick={saveShopName}
++              disabled={!shopNameDraft.trim() || shopNameBusy}
++              className="w-full mt-3 py-3 rounded-xl font-bold text-white text-sm disabled:opacity-50"
++              style={{ backgroundColor: COLORS.gold }}
++            >
++              {shopNameBusy ? '…' : lang === 'KH' ? 'រក្សាទុក' : 'Save'}
++            </button>
++            <button onClick={skipShopName} className="w-full mt-2 py-2 text-xs font-semibold" style={{ color: COLORS.muted }}>
++              {lang === 'KH' ? 'ពេលក្រោយ' : 'Later'}
++            </button>
++          </div>
++        </div>
++      )}
++
+       {showSubscription && profile && (
+         <SubscriptionModal
+           lang={lang}
+diff --git a/src/components/AccountScreen.tsx b/src/components/AccountScreen.tsx
+index 79f880a..192810d 100644
+--- a/src/components/AccountScreen.tsx
++++ b/src/components/AccountScreen.tsx
+@@ -61,7 +61,7 @@ interface Props {
+ const inputStyle: CSSProperties = { borderColor: COLORS.border, backgroundColor: '#FFFFFF', color: COLORS.navy };
+ 
+ function getTrialDaysRemaining(trialStartedAt: string | null): number {
+-  const TRIAL_DAYS = 30;
++  const TRIAL_DAYS = 15;
+   if (!trialStartedAt) return TRIAL_DAYS;
+   const start = new Date(trialStartedAt).getTime();
+   const now = Date.now();
+diff --git a/src/components/SubscriptionModal.tsx b/src/components/SubscriptionModal.tsx
+index 2ba2aa6..8ba7f72 100644
+--- a/src/components/SubscriptionModal.tsx
++++ b/src/components/SubscriptionModal.tsx
+@@ -27,7 +27,7 @@ import { COLORS, latinFont, khmerFont } from '../lib/theme';
+ import { prepareImageForUpload, UploadValidationError } from '../lib/uploadImage';
+ import { botLink, haptic, openTelegramLink } from '../lib/telegram';
+ 
+-type PlanKey = '1m' | '6m' | '1y';
++type PlanKey = '1m' | '2m' | '3m' | '1y';
+ 
+ const PLANS: {
+   key: PlanKey;
+@@ -38,15 +38,19 @@ const PLANS: {
+   labelEn: string;
+   tag?: string;
+ }[] = [
+-  { key: '1m', months: 1, price: 2, originalPrice: 5, labelKh: '១ ខែ', labelEn: '1 Month' },
+-  { key: '6m', months: 6, price: 7, originalPrice: 10, labelKh: '៦ ខែ', labelEn: '6 Months' },
+-  { key: '1y', months: 12, price: 14, originalPrice: 20, labelKh: '១ ឆ្នាំ', labelEn: '1 Year', tag: 'Best Value' },
++  { key: '1m', months: 1, price: 3, originalPrice: 5, labelKh: '១ ខែ', labelEn: '1 Month' },
++  { key: '2m', months: 2, price: 5, originalPrice: 10, labelKh: '២ ខែ', labelEn: '2 Months' },
++  { key: '3m', months: 3, price: 7, originalPrice: 15, labelKh: '៣ ខែ', labelEn: '3 Months' },
++  { key: '1y', months: 12, price: 25, originalPrice: 60, labelKh: '១២ ខែ', labelEn: '12 Months', tag: 'Best Value' },
+ ];
+ 
++// The per-plan QR pictures were printed with the old prices, so every plan
++// now shows the general QR and the payer types the amount shown above.
+ const PLAN_QR: Record<PlanKey, string> = {
+-  '1m': '/qr/subscription-1m.png',
+-  '6m': '/qr/subscription-6m.png',
+-  '1y': '/qr/subscription-1y.png',
++  '1m': `${import.meta.env.BASE_URL}qr/subscription-qr.png`,
++  '2m': `${import.meta.env.BASE_URL}qr/subscription-qr.png`,
++  '3m': `${import.meta.env.BASE_URL}qr/subscription-qr.png`,
++  '1y': `${import.meta.env.BASE_URL}qr/subscription-qr.png`,
+ };
+ 
+ interface Profile {
+@@ -269,7 +273,7 @@ export default function SubscriptionModal({ lang, profile, trialDaysRemaining, o
+           {!submitted ? (
+             <>
+               {/* Plan cards */}
+-              <div className="grid grid-cols-3 gap-2 mb-4">
++              <div className="grid grid-cols-4 gap-1.5 mb-4">
+                 {PLANS.map((p) => {
+                   const isSelected = selected === p.key;
+                   const pct = Math.round((1 - p.price / p.originalPrice) * 100);
+@@ -280,7 +284,7 @@ export default function SubscriptionModal({ lang, profile, trialDaysRemaining, o
+                         setSelected(p.key);
+                         setShowDetails(false);
+                       }}
+-                      className="relative rounded-2xl border-2 p-2.5 text-center transition-all duration-200"
++                      className="relative rounded-2xl border-2 px-1 py-2.5 text-center transition-all duration-200"
+                       style={{
+                         borderColor: isSelected ? COLORS.navy : COLORS.border,
+                         backgroundColor: isSelected ? COLORS.navyTint : '#FFFFFF',
+diff --git a/src/main.tsx b/src/main.tsx
+index 75e8691..a9c4708 100644
+--- a/src/main.tsx
++++ b/src/main.tsx
+@@ -5,7 +5,7 @@ import './index.css';
+ 
+ if ('serviceWorker' in navigator) {
+   window.addEventListener('load', () => {
+-    navigator.serviceWorker.register('/sw.js').catch(() => {
++    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {
+       // PWA install/offline support is a progressive enhancement — if
+       // registration fails (e.g. unsupported preview environment), the app
+       // still works normally as a regular web page.
+diff --git a/supabase/functions-dashboard-copy/create-qr-payment.ts b/supabase/functions-dashboard-copy/create-qr-payment.ts
+index dd10fd5..adc9d2c 100644
+--- a/supabase/functions-dashboard-copy/create-qr-payment.ts
++++ b/supabase/functions-dashboard-copy/create-qr-payment.ts
+@@ -10,9 +10,10 @@
+ import { createClient } from 'npm:@supabase/supabase-js@2';
+ 
+ const PLANS: Record<string, { months: number; price: number; labelEn: string }> = {
+-  '1m': { months: 1, price: 2, labelEn: '1 Month Subscription' },
+-  '6m': { months: 6, price: 7, labelEn: '6 Month Subscription' },
+-  '1y': { months: 12, price: 14, labelEn: '1 Year Subscription' },
++  '1m': { months: 1, price: 3, labelEn: '1 Month Subscription' },
++  '2m': { months: 2, price: 5, labelEn: '2 Month Subscription' },
++  '3m': { months: 3, price: 7, labelEn: '3 Month Subscription' },
++  '1y': { months: 12, price: 25, labelEn: '12 Month Subscription' },
+ };
+ 
+ function paywayBaseUrl(): string {
+diff --git a/supabase/functions/_shared/payway.ts b/supabase/functions/_shared/payway.ts
+index a56f1d4..c432260 100644
+--- a/supabase/functions/_shared/payway.ts
++++ b/supabase/functions/_shared/payway.ts
+@@ -6,9 +6,10 @@
+ //   PAYWAY_ENV           - "sandbox" (default) or "production"
+ 
+ export const PLANS: Record<string, { months: number; price: number; labelEn: string }> = {
+-  '1m': { months: 1, price: 2, labelEn: '1 Month Subscription' },
+-  '6m': { months: 6, price: 7, labelEn: '6 Month Subscription' },
+-  '1y': { months: 12, price: 14, labelEn: '1 Year Subscription' },
++  '1m': { months: 1, price: 3, labelEn: '1 Month Subscription' },
++  '2m': { months: 2, price: 5, labelEn: '2 Month Subscription' },
++  '3m': { months: 3, price: 7, labelEn: '3 Month Subscription' },
++  '1y': { months: 12, price: 25, labelEn: '12 Month Subscription' },
+ };
+ 
+ export function paywayBaseUrl(): string {
+diff --git a/supabase/functions/telegram-bridge/index.ts b/supabase/functions/telegram-bridge/index.ts
+index e590d09..a64a765 100644
+--- a/supabase/functions/telegram-bridge/index.ts
++++ b/supabase/functions/telegram-bridge/index.ts
+@@ -8,7 +8,7 @@
+ //   link_begin      -> (signed-in user) a code that attaches Telegram to this account
+ //
+ // SaveIt bot calls (X-Bridge-Secret):
+-//   hello, approve, status, plans, add_tx, unpaid, activate
++//   hello, approve, status, plans, add_tx, set_name, unpaid, activate
+ //
+ // Telegram signatures are checked by the SaveIt backend, which holds the bot
+ // token; this function never sees the token.
+@@ -18,14 +18,15 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+ const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+ const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+ 
+-const TRIAL_DAYS = 30;
++const TRIAL_DAYS = 15;
+ const LOGIN_CODE_TTL_MS = 5 * 60 * 1000;
+ const LINK_CODE_TTL_MS = 15 * 60 * 1000;
+ 
+ export const PLANS = [
+-  { key: "1m", months: 1, price: 2, label_km: "១ ខែ", label_en: "1 Month" },
+-  { key: "6m", months: 6, price: 7, label_km: "៦ ខែ", label_en: "6 Months" },
+-  { key: "1y", months: 12, price: 14, label_km: "១ ឆ្នាំ", label_en: "1 Year" },
++  { key: "1m", months: 1, price: 3, label_km: "១ ខែ", label_en: "1 Month" },
++  { key: "2m", months: 2, price: 5, label_km: "២ ខែ", label_en: "2 Months" },
++  { key: "3m", months: 3, price: 7, label_km: "៣ ខែ", label_en: "3 Months" },
++  { key: "1y", months: 12, price: 25, label_km: "១២ ខែ", label_en: "12 Months" },
+ ];
+ 
+ const CORS = {
+@@ -375,6 +376,15 @@ async function bridgeAction(action: string, body: Json) {
+     return { ok: true, ...(await summary(admin, profile)) };
+   }
+ 
++  if (action === "set_name") {
++    const profile = await profileByTelegram(tgFrom(body).id);
++    if (!profile) return { ok: false, error: "not_linked" };
++    const name = String(body.business_name ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
++    if (!name) return { ok: false, error: "empty" };
++    await admin.from("profiles").update({ business_name: name }).eq("id", profile.id);
++    return { ok: true, business_name: name };
++  }
++
+   if (action === "unpaid") {
+     const profile = await profileByTelegram(tgFrom(body).id);
+     if (!profile) return { ok: false, error: "not_linked" };
+diff --git a/supabase/migrations/20260926170000_plans_2m_3m.sql b/supabase/migrations/20260926170000_plans_2m_3m.sql
+new file mode 100644
+index 0000000..be6aa92
+--- /dev/null
++++ b/supabase/migrations/20260926170000_plans_2m_3m.sql
+@@ -0,0 +1,32 @@
++-- New price list: 1m $3, 2m $5, 3m $7, 12m $25 (12m keeps the key '1y').
++-- '6m' stays valid so older requests still read correctly.
++alter table public.subscription_requests drop constraint if exists subscription_requests_plan_check;
++alter table public.subscription_requests
++  add constraint subscription_requests_plan_check
++  check (plan = any (array['1m', '2m', '3m', '6m', '1y']));
++
++create or replace function public.apply_subscription_on_confirm()
++returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
++declare
++  plan_months integer;
++  current_expiry timestamptz;
++begin
++  if new.status = 'confirmed' and (old.status is distinct from 'confirmed') then
++    plan_months := case new.plan
++      when '1m' then 1
++      when '2m' then 2
++      when '3m' then 3
++      when '6m' then 6
++      when '1y' then 12
++      else 1
++    end;
++
++    select subscription_expires_at into current_expiry from profiles where id = new.user_id;
++
++    update profiles
++    set is_locked = false,
++        subscription_expires_at = greatest(now(), coalesce(current_expiry, now())) + (plan_months || ' months')::interval
++    where id = new.user_id;
++  end if;
++  return new;
++end; $$;
+diff --git a/vite.config.ts b/vite.config.ts
+index 90ac88c..fc2de98 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -2,6 +2,9 @@ import { defineConfig } from 'vite';
+ import react from '@vitejs/plugin-react';
+ 
+ export default defineConfig({
++  // KH_INVOICE_BASE=/invoice/ builds the copy the SaveIt backend serves as
++  // the bot's Mini App; the default keeps the standalone site at /.
++  base: process.env.KH_INVOICE_BASE || '/',
+   plugins: [react()],
+   server: {
+     host: true,
 -- 
 2.43.0
 
