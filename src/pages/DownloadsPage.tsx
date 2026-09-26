@@ -19,7 +19,6 @@ export function DownloadsPage() {
   const [downloads, setDownloads] = useState<(Download & { episode?: Episode; group?: Group })[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>('all');
-  const [simulating, setSimulating] = useState(false);
 
   const loadDownloads = useCallback(async () => {
     // Paged -- one request tops out at 1000 rows, and a busy queue passes that.
@@ -38,48 +37,36 @@ export function DownloadsPage() {
     loadDownloads();
   }, [loadDownloads]);
 
-  // Simulate progress for demo
+  // Live refresh while anything is moving. The worker writes real progress
+  // and speed as it downloads; this just re-reads them. (This used to be a
+  // demo simulator that wrote invented progress into the real downloads
+  // table every 2 seconds -- it fought the worker's own writes and could mark
+  // a download "completed" that had never produced a file.)
+  const hasActive = downloads.some((d) => d.status === 'downloading' || d.status === 'queued');
   useEffect(() => {
-    const activeDls = downloads.filter((d) => d.status === 'downloading' || d.status === 'queued');
-    if (activeDls.length === 0) return;
-
-    setSimulating(true);
-    const interval = setInterval(async () => {
-      const active = downloads.filter((d) => d.status === 'downloading');
-      for (const dl of active) {
-        const newProgress = Math.min(dl.progress + Math.random() * 8, 100);
-        const newDownloaded = Math.min(dl.downloaded_bytes + dl.total_bytes * 0.05, dl.total_bytes);
-        const newSpeed = 2 + Math.random() * 8;
-
-        if (newProgress >= 100) {
-          await supabase.from('downloads').update({
-            status: 'completed',
-            progress: 100,
-            downloaded_bytes: dl.total_bytes,
-            completed_at: new Date().toISOString(),
-            speed_mbps: 0,
-          }).eq('id', dl.id);
-          await supabase.from('episodes').update({ status: 'completed' }).eq('id', dl.episode_id);
-        } else {
-          await supabase.from('downloads').update({
-            progress: newProgress,
-            downloaded_bytes: newDownloaded,
-            speed_mbps: newSpeed,
-          }).eq('id', dl.id);
-        }
-      }
-      loadDownloads();
-    }, 2000);
-
+    if (!hasActive) return;
+    const interval = setInterval(loadDownloads, 3000);
     return () => clearInterval(interval);
-  }, [downloads, loadDownloads]);
+  }, [hasActive, loadDownloads]);
 
+  /**
+   * Start / Resume / Retry. This only puts the download back in the queue --
+   * the backend worker picks up status 'queued' rows and is the one that
+   * marks them 'downloading' once it has actually begun. Setting
+   * 'downloading' here (as this used to) meant the worker never saw the row,
+   * so it sat "downloading" at 0% forever with nothing running.
+   */
   const startDownload = async (id: string, episodeId: string) => {
     await supabase.from('downloads').update({
-      status: 'downloading',
-      started_at: new Date().toISOString(),
+      status: 'queued',
+      progress: 0,
+      downloaded_bytes: 0,
+      speed_mbps: 0,
+      error: null,
+      started_at: null,
+      queued_at: new Date().toISOString(),
     }).eq('id', id);
-    await supabase.from('episodes').update({ status: 'downloading' }).eq('id', episodeId);
+    await supabase.from('episodes').update({ status: 'queued' }).eq('id', episodeId);
     loadDownloads();
   };
 
@@ -301,10 +288,10 @@ export function DownloadsPage() {
         </div>
       )}
 
-      {simulating && downloads.some((d) => d.status === 'downloading') && (
+      {downloads.some((d) => d.status === 'downloading') && (
         <div className="flex items-center gap-2 text-xs text-accent-400 justify-center pt-2">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          Live download simulation running...
+          Updating live…
         </div>
       )}
     </div>
