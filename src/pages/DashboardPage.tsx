@@ -195,7 +195,7 @@ export function DashboardPage({
         <div className="relative flex flex-wrap items-center gap-4">
           <AppLogo size={52} className="glow" />
           <div className="min-w-0 flex-1">
-            <h2 className="text-xl font-bold tracking-tight text-white">KH Telegram Download</h2>
+            <h2 className="text-xl font-bold tracking-tight text-white">SaveIt KH</h2>
             <p className="text-xs text-dark-400">
               {account?.connected && accountName ? (
                 <>

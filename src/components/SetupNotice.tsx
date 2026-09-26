@@ -13,7 +13,7 @@ export function SetupNotice() {
         <div className="mb-4 flex items-center gap-3">
           <AppLogo size={40} />
           <div>
-            <h1 className="text-lg font-bold">KH Telegram Download</h1>
+            <h1 className="text-lg font-bold">SaveIt KH</h1>
             <p className="text-xs text-dark-500">Configuration needed</p>
           </div>
         </div>

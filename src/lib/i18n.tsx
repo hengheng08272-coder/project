@@ -15,8 +15,8 @@ const en = {
   'nav.systemStatus': 'System Status',
   'nav.online': 'Online',
   'nav.offline': 'Not connected',
-  'nav.appName': 'KH Telegram Download',
-  'nav.appTagline': 'Telegram video toolkit',
+  'nav.appName': 'SaveIt KH',
+  'nav.appTagline': 'Telegram · YouTube · FB · TikTok',
 
   'page.dashboard.title': 'Dashboard',
   'page.dashboard.subtitle': 'Everything at a glance',
@@ -497,8 +497,8 @@ const km: Record<TranslationKey, string> = {
   'nav.systemStatus': 'ស្ថានភាពប្រព័ន្ធ',
   'nav.online': 'កំពុងដំណើរការ',
   'nav.offline': 'មិនទាន់ភ្ជាប់',
-  'nav.appName': 'KH Telegram Download',
-  'nav.appTagline': 'ឧបករណ៍វីដេអូ Telegram',
+  'nav.appName': 'SaveIt KH',
+  'nav.appTagline': 'Telegram · YouTube · FB · TikTok',
 
   'page.dashboard.title': 'ផ្ទាំងគ្រប់គ្រង',
   'page.dashboard.subtitle': 'មើលទិដ្ឋភាពទាំងអស់ក្នុងមួយភ្លែត',
