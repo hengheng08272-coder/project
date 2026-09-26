@@ -1,0 +1,1583 @@
+From 3571b2247ebf1d859a1fcad6f81f6d5920692dd2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 12:40:31 +0000
+Subject: [PATCH] Sign in with Telegram, run KH Invoice from the SaveIt KH bot,
+ new Home
+
+- Mini App: opened from the bot, the page signs in by itself with Telegram's
+  signed initData (first visit creates the account with a 30-day trial).
+- Browser: "Sign in with Telegram" confirms a one-time code in the bot.
+- Existing phone accounts can connect Telegram from Home or Account.
+- Plans can be paid in the bot (KHQR / ABA); the telegram-bridge edge
+  function switches the plan on through the existing subscription trigger.
+- Home: one hero with balance, today's income/expense and the plan status.
+- profiles: users can no longer write their own Telegram link or billing
+  fields (subscription_expires_at, is_locked, trial_started_at).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hDCkKwgRj9X8RVpBZAfiZ
+---
+ index.html                                    |   3 +
+ src/App.tsx                                   | 489 ++++++++++++------
+ src/components/AccountScreen.tsx              |  14 +-
+ src/components/SubscriptionModal.tsx          |  26 +
+ src/components/TelegramCard.tsx               | 120 +++++
+ src/lib/telegram.ts                           | 149 ++++++
+ supabase/functions/telegram-bridge/index.ts   | 451 ++++++++++++++++
+ .../20260926150000_telegram_bridge.sql        |  72 +++
+ 8 files changed, 1159 insertions(+), 165 deletions(-)
+ create mode 100644 src/components/TelegramCard.tsx
+ create mode 100644 src/lib/telegram.ts
+ create mode 100644 supabase/functions/telegram-bridge/index.ts
+ create mode 100644 supabase/migrations/20260926150000_telegram_bridge.sql
+
+diff --git a/index.html b/index.html
+index dc082ea..bd06111 100644
+--- a/index.html
++++ b/index.html
+@@ -15,6 +15,9 @@
+     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+     <meta name="apple-mobile-web-app-title" content="KH Invoice" />
+     <title>KH Invoice</title>
++    <!-- Telegram Mini App API: harmless in a browser, and inside the SaveIt KH
++         bot it hands us the signed initData used to sign in automatically. -->
++    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+   </head>
+   <body>
+     <div id="root"></div>
+diff --git a/src/App.tsx b/src/App.tsx
+index 68bdc89..2257a3e 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -30,6 +30,8 @@ import {
+   Clock,
+   Maximize2,
+   HelpCircle,
++  Crown,
++  Loader2,
+ } from 'lucide-react';
+ import type { LucideIcon } from 'lucide-react';
+ import { Users, Tag, HandCoins, Store } from 'lucide-react';
+@@ -50,6 +52,14 @@ import InstallScreen from './components/InstallScreen';
+ import FeatureBanner from './components/FeatureBanner';
+ import AuthFeatureCarousel from './components/AuthFeatureCarousel';
+ import logoFull from './assets/logo-signin.png';
++import TelegramCard from './components/TelegramCard';
++import {
++  beginBrowserLogin,
++  haptic,
++  isInsideTelegram,
++  prepareTelegramChrome,
++  signInWithMiniApp,
++} from './lib/telegram';
+ 
+ 
+ 
+@@ -73,6 +83,9 @@ interface Profile {
+   avatar_url: string | null;
+   subscription_qr_url: string | null;
+   stock_module_enabled: boolean | null;
++  subscription_expires_at?: string | null;
++  telegram_id?: number | null;
++  telegram_username?: string | null;
+ }
+ 
+ interface Transaction {
+@@ -282,7 +295,7 @@ export default function App() {
+   // dashboard, always scrollable top to bottom.
+   const [homeShowAllTx, setHomeShowAllTx] = useState(false);
+   const [showBalance, setShowBalance] = useState(true);
+-  const [homeStatsTab, setHomeStatsTab] = useState<'today' | 'month'>('today');
++  const [homeStatsTab, setHomeStatsTab] = useState<'today' | 'month'>('month');
+   const [financeShowAllTx, setFinanceShowAllTx] = useState(false);
+ 
+ 
+@@ -572,17 +585,27 @@ export default function App() {
+   const balanceKHR = incomeKHR - expenseKHR;
+ 
+   useEffect(() => {
+-    supabase.auth.getSession().then(async ({ data }: { data: { session: Session | null } }) => {
+-      const { session } = data;
+-      if (session) {
+-        const p = await loadProfile(session.user.id);
+-        if (p) {
+-          setProfile(p);
+-          setCurrentScreen('Home');
++    prepareTelegramChrome(COLORS.navy);
++    const boot = async () => {
++      let session: Session | null = (await supabase.auth.getSession()).data.session;
++      // Opened from the SaveIt KH bot: Telegram has already told us who this
++      // is, so sign straight in (the first visit creates the account).
++      if (!session && isInsideTelegram()) {
++        try {
++          session = await signInWithMiniApp();
++        } catch (err) {
++          setSignInError(
++            String((err as Error)?.message) === 'locked'
++              ? 'គណនីរបស់អ្នកត្រូវបានចាក់សោរ! / Your account has been locked!'
++              : 'មិនអាចចូលតាម Telegram បានទេ សូមព្យាយាមម្ដងទៀត / Telegram sign-in failed, please retry'
++          );
++          setCurrentScreen('SignIn');
+         }
+       }
++      if (session) await enterWithSession(session);
+       setLoading(false);
+-    });
++    };
++    void boot();
+ 
+     const { data: listener } = supabase.auth.onAuthStateChange((event: string) => {
+       if (event === 'SIGNED_OUT') {
+@@ -604,6 +627,73 @@ export default function App() {
+   const isPasswordValid = Object.values(passRules).every(Boolean);
+   const isConfirmMatch = signUpPassword && signUpPassword === signUpConfirmPassword;
+ 
++  const enterWithSession = async (session: Session) => {
++    const p = await loadProfile(session.user.id);
++    if (!p) return false;
++    if (p.is_locked) {
++      setSignInError(lang === 'KH' ? 'គណនីរបស់អ្នកត្រូវបានចាក់សោរ!' : 'Your account has been locked!');
++      await supabase.auth.signOut();
++      return false;
++    }
++    setProfile(p);
++    setCurrentScreen('Home');
++    return true;
++  };
++
++  const refreshProfile = async () => {
++    const { data } = await supabase.auth.getSession();
++    if (!data.session) return;
++    const p = await loadProfile(data.session.user.id);
++    if (p) setProfile(p);
++  };
++
++  // "Sign in with Telegram": instant inside the bot's Mini App; in a browser
++  // the bot asks the person to confirm, and this page waits for that.
++  const [tgWaitingUrl, setTgWaitingUrl] = useState<string | null>(null);
++  const tgCancelRef = useRef<(() => void) | null>(null);
++  const handleTelegramSignIn = async () => {
++    haptic();
++    setSignInError('');
++    if (isInsideTelegram()) {
++      setSignInBusy(true);
++      try {
++        await enterWithSession(await signInWithMiniApp());
++      } catch {
++        setSignInError(lang === 'KH' ? 'មិនអាចចូលតាម Telegram បានទេ' : 'Telegram sign-in failed');
++      } finally {
++        setSignInBusy(false);
++      }
++      return;
++    }
++    // Opened synchronously, inside the tap, so no popup blocker stops it.
++    const tab = window.open('', '_blank');
++    try {
++      const flow = await beginBrowserLogin();
++      tgCancelRef.current = flow.cancel;
++      if (tab) tab.location.href = flow.url;
++      setTgWaitingUrl(flow.url);
++      const session = await flow.done;
++      setTgWaitingUrl(null);
++      await enterWithSession(session);
++    } catch (err) {
++      tab?.close();
++      setTgWaitingUrl(null);
++      const reason = String((err as Error)?.message);
++      if (reason !== 'cancelled') {
++        setSignInError(
++          reason === 'expired'
++            ? lang === 'KH' ? 'អស់ពេលហើយ — សូមចុចម្ដងទៀត' : 'Timed out — please try again'
++            : lang === 'KH' ? 'មិនអាចចូលតាម Telegram បានទេ' : 'Telegram sign-in failed'
++        );
++      }
++    }
++  };
++  const cancelTelegramSignIn = () => {
++    tgCancelRef.current?.();
++    tgCancelRef.current = null;
++    setTgWaitingUrl(null);
++  };
++
+   const handleSignInSubmit = async () => {
+     setSignInError('');
+     if (!signInPhone || !signInPassword) {
+@@ -1147,9 +1237,65 @@ export default function App() {
+                 {t.login}
+               </h2>
+               <p className="text-xs mb-3" style={{ color: COLORS.muted }}>
+-                {lang === 'KH' ? 'សូមបញ្ចូលលេខទូរស័ព្ទ និងលេខសម្ងាត់របស់អ្នក' : 'Please input your credentials'}
++                {lang === 'KH' ? 'ចូលរហ័សតាម Telegram ឬ ប្រើលេខទូរស័ព្ទ' : 'Sign in fast with Telegram, or use your phone'}
++              </p>
++
++              {tgWaitingUrl ? (
++                <div
++                  className="rounded-2xl p-3.5 text-center"
++                  style={{ backgroundColor: '#E7F5FD', border: '1px solid #BFE3F7' }}
++                >
++                  <Loader2 size={22} className="animate-spin mx-auto" color="#229ED9" />
++                  <p className="text-xs font-bold mt-2" style={{ color: COLORS.navy }}>
++                    {lang === 'KH' ? 'កំពុងរង់ចាំការបញ្ជាក់ក្នុង Telegram…' : 'Waiting for you to confirm in Telegram…'}
++                  </p>
++                  <p className="text-[11px] mt-1 leading-relaxed" style={{ color: COLORS.muted }}>
++                    {lang === 'KH'
++                      ? 'ចុច «បាទ/ចាស ចូល» នៅក្នុង bot រួចត្រឡប់មកទីនេះវិញ'
++                      : 'Tap “Yes, sign me in” in the bot, then come back here'}
++                  </p>
++                  <div className="flex gap-2 mt-3">
++                    <a
++                      href={tgWaitingUrl}
++                      target="_blank"
++                      rel="noopener noreferrer"
++                      className="flex-1 py-2 rounded-lg text-xs font-bold text-white"
++                      style={{ background: 'linear-gradient(135deg, #2AABEE, #1D8FD1)' }}
++                    >
++                      {lang === 'KH' ? 'បើក Telegram' : 'Open Telegram'}
++                    </a>
++                    <button
++                      onClick={cancelTelegramSignIn}
++                      className="px-3 py-2 rounded-lg text-xs font-bold"
++                      style={{ backgroundColor: '#FFFFFF', color: COLORS.muted, border: `1px solid ${COLORS.border}` }}
++                    >
++                      {lang === 'KH' ? 'បោះបង់' : 'Cancel'}
++                    </button>
++                  </div>
++                </div>
++              ) : (
++                <button
++                  onClick={handleTelegramSignIn}
++                  disabled={signInBusy}
++                  className="w-full py-3 rounded-xl font-bold text-white text-sm flex items-center justify-center gap-2 transition-transform active:scale-[0.98] disabled:opacity-60"
++                  style={{ background: 'linear-gradient(135deg, #2AABEE, #1D8FD1)', boxShadow: '0 6px 14px rgba(34,158,217,0.35)' }}
++                >
++                  <Send size={17} color="#FFFFFF" strokeWidth={2.2} />
++                  {lang === 'KH' ? 'ចូលតាម Telegram' : 'Sign in with Telegram'}
++                </button>
++              )}
++              <p className="text-[10px] text-center mt-1.5" style={{ color: COLORS.muted }}>
++                {lang === 'KH' ? '🎁 គណនីថ្មី៖ សាកល្បងឥតគិតថ្លៃ ៣០ ថ្ងៃ · មិនបាច់លេខសម្ងាត់' : '🎁 New here: 30-day free trial · no password needed'}
+               </p>
+ 
++              <div className="flex items-center gap-2 my-3.5">
++                <span className="flex-1 h-px" style={{ backgroundColor: COLORS.border }} />
++                <span className="text-[10px] font-semibold" style={{ color: COLORS.muted }}>
++                  {lang === 'KH' ? 'ឬ ចូលដោយលេខទូរស័ព្ទ' : 'or with your phone number'}
++                </span>
++                <span className="flex-1 h-px" style={{ backgroundColor: COLORS.border }} />
++              </div>
++
+               <label
+                 className="text-xs font-semibold block mt-2 mb-1.5"
+                 style={{ color: COLORS.navy }}
+@@ -1548,50 +1694,33 @@ export default function App() {
+          ============================================ */}
+       {currentScreen === 'Home' && (
+         <div className="h-[100dvh] flex flex-col overflow-hidden" style={{ backgroundColor: COLORS.bgApp }}>
+-          {/* Header */}
++          {/* Hero — greeting, plan status and the balance in one card, so
++             the first screen answers "how is my shop doing?" at a glance. */}
+           <div
+-            className="px-4 pb-5 relative overflow-hidden"
++            className="px-4 pb-4 relative overflow-hidden"
+             style={{
+-              background: `linear-gradient(160deg, ${COLORS.navyGradientStart}, ${COLORS.navyGradientEnd})`,
++              background: `linear-gradient(155deg, #082F5E 0%, ${COLORS.navy} 48%, #1F6FC0 100%)`,
+               paddingTop: 'max(0.9rem, env(safe-area-inset-top))',
++              borderBottomLeftRadius: 28,
++              borderBottomRightRadius: 28,
++              boxShadow: '0 10px 24px rgba(8,47,94,0.28)',
+             }}
+           >
+-            {/* soft decorative glow so the header doesn't look flat */}
+-            <div
+-              className="pointer-events-none absolute rounded-full"
+-              style={{ width: 180, height: 180, top: -90, right: -60, background: 'rgba(255,255,255,0.06)' }}
+-            />
+             <div
+               className="pointer-events-none absolute rounded-full"
+-              style={{ width: 110, height: 110, top: 20, left: -50, background: 'rgba(255,255,255,0.05)' }}
++              style={{ width: 220, height: 220, top: -120, right: -70, background: 'rgba(255,255,255,0.07)' }}
+             />
+-            {/* warm gold glow — a small touch of the brand's accent color so
+-               the header isn't monochrome navy */}
+             <div
+               className="pointer-events-none absolute rounded-full"
+-              style={{ width: 130, height: 130, bottom: -70, right: 30, background: `radial-gradient(circle, ${COLORS.accentGold}33, transparent 70%)` }}
++              style={{ width: 160, height: 160, bottom: -90, left: -40, background: `radial-gradient(circle, ${COLORS.accentGold}40, transparent 70%)` }}
+             />
+-            {/* faint dotted texture for a bit of tactile polish */}
+-            <svg
+-              className="pointer-events-none absolute"
+-              style={{ top: 4, right: 70, opacity: 0.35 }}
+-              width="60"
+-              height="34"
+-              viewBox="0 0 60 34"
+-            >
+-              {[0, 1, 2].map((row) =>
+-                [0, 1, 2, 3, 4, 5].map((col) => (
+-                  <circle key={`${row}-${col}`} cx={col * 11 + 4} cy={row * 12 + 5} r={1.4} fill="rgba(255,255,255,0.5)" />
+-                ))
+-              )}
+-            </svg>
+-            <div className="relative flex justify-between items-center">
+ 
++            <div className="relative flex justify-between items-center">
+               <div className="flex items-center flex-1 min-w-0">
+                 {profile?.avatar_url ? (
+                   <div
+                     className="rounded-2xl overflow-hidden flex-shrink-0"
+-                    style={{ width: 46, height: 46, boxShadow: '0 0 0 2px rgba(255,255,255,0.35)' }}
++                    style={{ width: 44, height: 44, boxShadow: '0 0 0 2px rgba(255,255,255,0.35)' }}
+                   >
+                     <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
+                   </div>
+@@ -1599,159 +1728,181 @@ export default function App() {
+                   <IconBadge icon={ImageIcon} size={INLINE} tint="light" shape="rounded" />
+                 )}
+                 <div className="ml-2.5 min-w-0">
+-                  <p className="text-[11px] font-semibold text-white/70 truncate">{greeting}</p>
+-                  <p className="text-sm font-bold text-white truncate">
+-                    {profile?.business_name || '...'}
+-                  </p>
++                  <p className="text-[11px] font-semibold text-white/70 truncate">{greeting} 👋</p>
++                  <p className="text-sm font-bold text-white truncate">{profile?.business_name || '...'}</p>
+                 </div>
+               </div>
+               <div className="flex items-center gap-1.5 flex-shrink-0">
+                 <button
+                   onClick={() => setLang(lang === 'KH' ? 'EN' : 'KH')}
+                   className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold"
+-                  style={{ backgroundColor: 'rgba(255,255,255,0.18)', color: '#FFFFFF' }}
++                  style={{ backgroundColor: 'rgba(255,255,255,0.16)', color: '#FFFFFF' }}
+                 >
+                   <Languages size={14} color="#FFFFFF" strokeWidth={2} />
+                   {lang === 'KH' ? 'ខ្មែរ' : 'EN'}
+                 </button>
+                 <IconBtn icon={HelpCircle} tint="light" size={32} aria-label={lang === 'KH' ? 'របៀបប្រើ' : 'How to use'} onClick={() => setShowTips(true)} />
+                 <IconBtn icon={Bell} tint="light" size={32} aria-label="Notifications" onClick={() => setShowSubscription(true)} />
+-                <IconBtn icon={LogOut} tint="light" size={32} onClick={handleLogout} aria-label="Logout" />
++                {!isInsideTelegram() && (
++                  <IconBtn icon={LogOut} tint="light" size={32} onClick={handleLogout} aria-label="Logout" />
++                )}
+               </div>
+             </div>
+-            <div className="relative flex items-center justify-between mt-3.5 gap-2">
+-              <p className="text-[11px] font-semibold text-white/75 truncate min-w-0" style={latinFont}>
+-                {new Date().toLocaleDateString(lang === 'KH' ? 'km-KH' : 'en-US', {
+-                  weekday: 'long',
+-                  day: 'numeric',
+-                  month: 'long',
+-                })}{' '}
+-                • {timeStr}
++
++            {/* Plan status — always visible, one tap from upgrading */}
++            {(() => {
++              const expires = profile?.subscription_expires_at ? new Date(profile.subscription_expires_at) : null;
++              const pro = Boolean(expires && expires.getTime() > Date.now());
++              const used = TRIAL_DAYS - trialDaysRemaining;
++              const label = pro
++                ? lang === 'KH'
++                  ? `Pro · រហូតដល់ ${expires!.toLocaleDateString('km-KH', { day: 'numeric', month: 'short', year: 'numeric' })}`
++                  : `Pro · until ${expires!.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}`
++                : trialDaysRemaining > 0
++                ? lang === 'KH'
++                  ? `សាកល្បង · នៅសល់ ${toKhmerNumber(trialDaysRemaining)} ថ្ងៃ`
++                  : `Trial · ${trialDaysRemaining} day${trialDaysRemaining === 1 ? '' : 's'} left`
++                : lang === 'KH'
++                ? 'ការសាកល្បងបានផុត — ដំឡើងជា Pro'
++                : 'Trial ended — upgrade to Pro';
++              return (
++                <button
++                  onClick={() => setShowSubscription(true)}
++                  className="relative mt-3 w-full flex items-center gap-2 px-3 py-2 rounded-2xl text-left"
++                  style={{ backgroundColor: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.14)' }}
++                >
++                  <span
++                    className="flex items-center justify-center rounded-lg flex-shrink-0"
++                    style={{ width: 24, height: 24, background: pro ? `linear-gradient(135deg, ${COLORS.accentGold}, ${COLORS.accentGoldDark})` : 'rgba(255,255,255,0.18)' }}
++                  >
++                    {pro ? <Crown size={13} color="#FFFFFF" strokeWidth={2.4} /> : <Clock size={13} color="#FFFFFF" strokeWidth={2.4} />}
++                  </span>
++                  <div className="flex-1 min-w-0">
++                    <p className="text-[11px] font-bold text-white truncate">{label}</p>
++                    {!pro && (
++                      <div className="mt-1 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}>
++                        <div
++                          className="h-full rounded-full"
++                          style={{
++                            width: `${Math.min(100, Math.max(4, (used / TRIAL_DAYS) * 100))}%`,
++                            background: trialDaysRemaining <= 7 ? '#FF8A6B' : `linear-gradient(90deg, ${COLORS.accentGold}, #FFD98A)`,
++                          }}
++                        />
++                      </div>
++                    )}
++                  </div>
++                  {!pro && (
++                    <span
++                      className="px-2.5 py-1 rounded-full text-[10px] font-extrabold flex-shrink-0"
++                      style={{ background: `linear-gradient(135deg, ${COLORS.accentGold}, ${COLORS.accentGoldDark})`, color: '#3B2600' }}
++                    >
++                      {lang === 'KH' ? 'ដំឡើង' : 'Upgrade'}
++                    </span>
++                  )}
++                </button>
++              );
++            })()}
++
++            {/* Balance */}
++            <div className="relative mt-3.5 flex items-center justify-between">
++              <p className="text-[11px] font-semibold text-white/75 tracking-wide flex items-center gap-1.5">
++                <Wallet size={13} className="text-white" strokeWidth={2.2} />
++                {lang === 'KH' ? 'សមតុល្យសរុប' : 'Total Balance'}
+               </p>
+-              <button
+-                onClick={() => setHomeShowAllTx(true)}
+-                className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold flex-shrink-0"
+-                style={{ backgroundColor: 'rgba(255,255,255,0.18)', color: '#FFFFFF' }}
+-                aria-label={lang === 'KH' ? 'មើលប្រតិបត្តិការទាំងអស់' : 'View all transactions'}
++              <div className="flex items-center gap-1.5">
++                <button
++                  onClick={() => setShowBalance((v) => !v)}
++                  aria-label={lang === 'KH' ? 'លាក់/បង្ហាញសមតុល្យ' : 'Show/hide balance'}
++                  className="flex items-center justify-center rounded-lg"
++                  style={{ width: 26, height: 26, background: 'rgba(255,255,255,0.14)' }}
++                >
++                  {showBalance ? <Eye size={13} className="text-white" /> : <EyeOff size={13} className="text-white" />}
++                </button>
++                <button
++                  onClick={() => setHomeShowAllTx(true)}
++                  className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold"
++                  style={{ backgroundColor: 'rgba(255,255,255,0.16)', color: '#FFFFFF' }}
++                  aria-label={lang === 'KH' ? 'មើលប្រតិបត្តិការទាំងអស់' : 'View all transactions'}
++                >
++                  <Receipt size={12} color="#FFFFFF" strokeWidth={2.2} />
++                  {lang === 'KH' ? 'ប្រតិបត្តិការ' : 'Transactions'}
++                </button>
++              </div>
++            </div>
++            <div className="relative flex items-end justify-between gap-2 mt-1">
++              <p className="text-[28px] leading-tight font-extrabold text-white truncate" style={latinFont}>
++                {showBalance
++                  ? `$${balanceUSD.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
++                  : '••••••'}
++              </p>
++              <div
++                className="flex items-center gap-1 px-2 py-1 rounded-full flex-shrink-0 mb-1"
++                style={{ backgroundColor: 'rgba(255,255,255,0.14)' }}
+               >
+-                <Receipt size={12} color="#FFFFFF" strokeWidth={2.2} />
+-                {lang === 'KH' ? 'ប្រតិបត្តិការ' : 'Transactions'}
+-              </button>
++                <span className="text-white/85 text-[10px] font-bold">៛</span>
++                <span className="text-white/85 text-[11px] font-semibold truncate" style={latinFont}>
++                  {showBalance ? balanceKHR.toLocaleString() : '••••'}
++                </span>
++              </div>
++            </div>
++
++            {/* Today in / out */}
++            <div className="relative grid grid-cols-2 gap-2 mt-3">
++              {[
++                { key: 'in', icon: TrendingUp, label: lang === 'KH' ? 'ចំណូលថ្ងៃនេះ' : 'Income today', value: formatMoney(todayTotals.incomeUSD, todayTotals.incomeKHR), tint: '#5BE3A0', onClick: () => openAddModal('income') },
++                { key: 'out', icon: TrendingDown, label: lang === 'KH' ? 'ចំណាយថ្ងៃនេះ' : 'Expense today', value: formatMoney(todayTotals.expenseUSD, todayTotals.expenseKHR), tint: '#FF9C85', onClick: () => openAddModal('expense') },
++              ].map((c) => (
++                <button
++                  key={c.key}
++                  onClick={c.onClick}
++                  className="flex items-center gap-2 px-2.5 py-2 rounded-xl text-left min-w-0 transition-transform active:scale-[0.97]"
++                  style={{ backgroundColor: 'rgba(255,255,255,0.10)' }}
++                >
++                  <span className="flex items-center justify-center rounded-lg flex-shrink-0" style={{ width: 26, height: 26, backgroundColor: 'rgba(255,255,255,0.14)' }}>
++                    <c.icon size={14} color={c.tint} strokeWidth={2.4} />
++                  </span>
++                  <span className="min-w-0">
++                    <span className="block text-[9.5px] text-white/70 truncate">{c.label}</span>
++                    <span className="block text-[12px] font-bold text-white truncate" style={latinFont}>
++                      {showBalance ? c.value : '••••'}
++                    </span>
++                  </span>
++                </button>
++              ))}
+             </div>
++            <p className="relative text-[10px] font-semibold text-white/60 mt-2.5 text-center" style={latinFont}>
++              {new Date().toLocaleDateString(lang === 'KH' ? 'km-KH' : 'en-US', { weekday: 'long', day: 'numeric', month: 'long' })} • {timeStr}
++            </p>
+           </div>
+ 
+-          {/* Trial + Install — merged into one slim strip so it never
+-             crowds the header/date, and only ever takes one row */}
+-          {(showTrialBanner || showInstallBanner) && (
++          {showInstallBanner && !isInsideTelegram() && (
+             <div
+               className="mx-3.5 mt-2.5 flex items-center gap-2 px-3 py-1.5 rounded-xl"
+               style={{ backgroundColor: '#FFFFFF', boxShadow: '0 2px 8px rgba(12,68,124,0.1)', border: `1px solid ${COLORS.border}` }}
+             >
+-              {showInstallBanner ? (
+-                <img src="/icon-192.png" alt="" className="w-6 h-6 rounded-md flex-shrink-0" />
+-              ) : (
+-                <Clock size={14} color={COLORS.goldDark} strokeWidth={2} className="flex-shrink-0" />
+-              )}
++              <img src="/icon-192.png" alt="" className="w-6 h-6 rounded-md flex-shrink-0" />
+               <p className="flex-1 min-w-0 truncate text-[11px] font-semibold" style={{ color: COLORS.navy }}>
+-                {showInstallBanner
+-                  ? lang === 'KH' ? 'ដំឡើង KH Invoice ជា App' : 'Install KH Invoice App'
+-                  : lang === 'KH'
+-                  ? `សាកល្បង — នៅសល់ ${toKhmerNumber(trialDaysRemaining)} ថ្ងៃ`
+-                  : `Trial — ${trialDaysRemaining} day${trialDaysRemaining === 1 ? '' : 's'} left`}
++                {lang === 'KH' ? 'ដំឡើង KH Invoice ជា App' : 'Install KH Invoice App'}
+               </p>
+-              {showInstallBanner && (
+-                <>
+-                  <button
+-                    onClick={handleInstallClick}
+-                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold text-white text-[11px] flex-shrink-0"
+-                    style={{ backgroundColor: COLORS.gold }}
+-                  >
+-                    <Download size={12} color="#FFFFFF" strokeWidth={2.5} />
+-                    {lang === 'KH' ? 'ដំឡើង' : 'Install'}
+-                  </button>
+-                  <button onClick={dismissInstallBanner} aria-label="Dismiss" className="flex-shrink-0">
+-                    <X size={15} color={COLORS.muted} strokeWidth={2} />
+-                  </button>
+-                </>
+-              )}
++              <button
++                onClick={handleInstallClick}
++                className="flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold text-white text-[11px] flex-shrink-0"
++                style={{ backgroundColor: COLORS.gold }}
++              >
++                <Download size={12} color="#FFFFFF" strokeWidth={2.5} />
++                {lang === 'KH' ? 'ដំឡើង' : 'Install'}
++              </button>
++              <button onClick={dismissInstallBanner} aria-label="Dismiss" className="flex-shrink-0">
++                <X size={15} color={COLORS.muted} strokeWidth={2} />
++              </button>
+             </div>
+           )}
+ 
+-          {/* Content — the top zone (swipe cards + quick actions) is fixed
+-             and never needs a vertical scroll. Only the transaction list
+-             at the bottom scrolls, and only within its own space. */}
+-          <div className="relative flex-1 min-h-0 flex flex-col">
+-          <div className="px-3.5 pt-3.5">
++          {/* Content — the top zone is fixed; only the list at the bottom
++             scrolls, within its own space. */}
++          <div className="relative flex-1 min-h-0 overflow-y-auto app-scroll">
++          <div className="px-3.5 pt-1">
+           <div className="mx-auto w-full" style={{ maxWidth: 520 }}>
+-            {/* Balance banner — standalone, full-width, compact hero at the
+-               very top of Home. One clear primary figure (USD) with KHR as
+-               a secondary pill, sized small-medium so it reads at a glance
+-               without dominating the screen. */}
+-            <div
+-              className="relative px-4 py-3.5 rounded-2xl overflow-hidden"
+-              style={{
+-                background: `linear-gradient(135deg, ${COLORS.navyGradientStart}, ${COLORS.navyGradientEnd})`,
+-                boxShadow: '0 6px 16px rgba(12,68,124,0.26), 0 2px 5px rgba(12,68,124,0.13)',
+-              }}
+-            >
+-              {/* trimmed-down decorative glow, kept subtle for a compact card */}
+-              <div
+-                className="absolute rounded-full pointer-events-none"
+-                style={{ width: 90, height: 90, top: -32, right: -24, background: 'rgba(255,255,255,0.06)' }}
+-              />
+-              {/* thin gold top edge — the one card on Home that gets the
+-                 real accent-gold treatment, marking it as the hero figure */}
+-              <div
+-                className="absolute top-0 left-0 right-0 pointer-events-none"
+-                style={{ height: 3, background: `linear-gradient(90deg, ${COLORS.accentGold}, transparent 75%)`, opacity: 0.9 }}
+-              />
+-
+-              <div className="relative flex items-center justify-between gap-3">
+-                <div className="flex items-center gap-2 min-w-0">
+-                  <div
+-                    className="flex items-center justify-center rounded-xl flex-shrink-0"
+-                    style={{ width: 26, height: 26, backgroundColor: 'rgba(255,255,255,0.14)' }}
+-                  >
+-                    <Wallet size={13} className="text-white" strokeWidth={2.2} />
+-                  </div>
+-                  <p className="text-[11px] font-semibold text-white/75 tracking-wide truncate">
+-                    {lang === 'KH' ? 'សមតុល្យសរុប' : 'Total Balance'}
+-                  </p>
+-                </div>
+-                <button
+-                  onClick={() => setShowBalance((v) => !v)}
+-                  aria-label={lang === 'KH' ? 'លាក់/បង្ហាញសមតុល្យ' : 'Show/hide balance'}
+-                  className="flex items-center justify-center rounded-lg flex-shrink-0"
+-                  style={{ width: 24, height: 24, background: 'rgba(255,255,255,0.14)' }}
+-                >
+-                  {showBalance ? (
+-                    <Eye size={12} className="text-white" />
+-                  ) : (
+-                    <EyeOff size={12} className="text-white" />
+-                  )}
+-                </button>
+-              </div>
+-
+-              {/* Primary + secondary figures on one relaxed baseline so the
+-                 card reads at a glance without feeling like two stacked rows */}
+-              <div className="relative flex items-end justify-between gap-2 mt-2">
+-                <p className="text-[23px] leading-tight font-extrabold text-white truncate" style={latinFont}>
+-                  {showBalance
+-                    ? `$${balanceUSD.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+-                    : '••••••'}
+-                </p>
+-                <div
+-                  className="flex items-center gap-1 px-2 py-1 rounded-full flex-shrink-0 mb-0.5"
+-                  style={{ backgroundColor: 'rgba(255,255,255,0.12)' }}
+-                >
+-                  <span className="text-white/85 text-[10px] font-bold">៛</span>
+-                  <span className="text-white/80 text-[11px] font-semibold truncate" style={latinFont}>
+-                    {showBalance ? balanceKHR.toLocaleString() : '••••'}
+-                  </span>
+-                </div>
+-              </div>
+-            </div>
+-
+             {/* Today / Month overview — segmented toggle so the most
+                important numbers (daily + monthly) are one tap apart */}
+             <div className="flex flex-col mt-3">
+@@ -2023,8 +2174,17 @@ export default function App() {
+           {/* Debt Summary — replaces the old Recent Transactions list.
+              The only part of Home that scrolls, and only within its own
+              remaining space below the fixed cards and quick actions above. */}
+-          <div className="flex-1 min-h-0 px-3.5 pb-24">
+-          <div className="mx-auto w-full h-full flex flex-col overflow-y-auto app-scroll" style={{ maxWidth: 520 }}>
++          <div className="px-3.5 pb-28">
++          <div className="mx-auto w-full flex flex-col" style={{ maxWidth: 520 }}>
++            <div className="mt-3">
++              <TelegramCard
++                lang={lang}
++                telegramId={profile?.telegram_id}
++                telegramUsername={profile?.telegram_username}
++                onRefresh={refreshProfile}
++                compact
++              />
++            </div>
+             <div className="flex items-center justify-between mt-3 mb-2">
+               <p className="text-sm font-bold flex items-center gap-1.5" style={{ color: COLORS.navy }}>
+                 <span className="inline-block rounded-full" style={{ width: 4, height: 14, backgroundColor: COLORS.accentGold }} />
+@@ -2843,6 +3003,7 @@ export default function App() {
+           onLangToggle={() => setLang(lang === 'KH' ? 'EN' : 'KH')}
+           onProfileUpdated={(p) => setProfile(p)}
+           onOpenSubscription={() => setShowSubscription(true)}
++          onRefreshProfile={refreshProfile}
+         />
+       )}
+ 
+diff --git a/src/components/AccountScreen.tsx b/src/components/AccountScreen.tsx
+index 6de9d48..79f880a 100644
+--- a/src/components/AccountScreen.tsx
++++ b/src/components/AccountScreen.tsx
+@@ -24,6 +24,7 @@ import { supabase } from '../lib/supabaseClient';
+ import { IconBadge } from './IconBadge';
+ import { COLORS, latinFont, INLINE, ACTION } from '../lib/theme';
+ import { prepareImageForUpload, UploadValidationError } from '../lib/uploadImage';
++import TelegramCard from './TelegramCard';
+ 
+ 
+ interface BeforeInstallPromptEvent extends Event {
+@@ -42,6 +43,8 @@ interface Profile {
+   avatar_url: string | null;
+   subscription_qr_url: string | null;
+   stock_module_enabled: boolean | null;
++  telegram_id?: number | null;
++  telegram_username?: string | null;
+ }
+ 
+ interface Props {
+@@ -52,6 +55,7 @@ interface Props {
+   onLangToggle: () => void;
+   onProfileUpdated: (p: Profile) => void;
+   onOpenSubscription: () => void;
++  onRefreshProfile: () => void;
+ }
+ 
+ const inputStyle: CSSProperties = { borderColor: COLORS.border, backgroundColor: '#FFFFFF', color: COLORS.navy };
+@@ -191,7 +195,7 @@ function InstallAppCard({ lang }: { lang: 'KH' | 'EN' }) {
+   );
+ }
+ 
+-export default function AccountScreen({ lang, profile, onBack, onLogout, onLangToggle, onProfileUpdated, onOpenSubscription }: Props) {
++export default function AccountScreen({ lang, profile, onBack, onLogout, onLangToggle, onProfileUpdated, onOpenSubscription, onRefreshProfile }: Props) {
+   const tr = (kh: string, en: string) => (lang === 'KH' ? kh : en);
+   const fileInputRef = useRef<HTMLInputElement>(null);
+   const avatarInputRef = useRef<HTMLInputElement>(null);
+@@ -446,6 +450,14 @@ export default function AccountScreen({ lang, profile, onBack, onLogout, onLangT
+           </div>
+         </div>
+ 
++        {/* Telegram */}
++        <TelegramCard
++          lang={lang}
++          telegramId={profile.telegram_id}
++          telegramUsername={profile.telegram_username}
++          onRefresh={onRefreshProfile}
++        />
++
+         {/* Install app */}
+         <InstallAppCard lang={lang} />
+ 
+diff --git a/src/components/SubscriptionModal.tsx b/src/components/SubscriptionModal.tsx
+index a1128de..2ba2aa6 100644
+--- a/src/components/SubscriptionModal.tsx
++++ b/src/components/SubscriptionModal.tsx
+@@ -25,6 +25,7 @@ import {
+ import { supabase } from '../lib/supabaseClient';
+ import { COLORS, latinFont, khmerFont } from '../lib/theme';
+ import { prepareImageForUpload, UploadValidationError } from '../lib/uploadImage';
++import { botLink, haptic, openTelegramLink } from '../lib/telegram';
+ 
+ type PlanKey = '1m' | '6m' | '1y';
+ 
+@@ -316,6 +317,31 @@ export default function SubscriptionModal({ lang, profile, trialDaysRemaining, o
+                 })}
+               </div>
+ 
++              {/* Pay in the SaveIt KH bot: the same plans, a KHQR for the exact
++                 amount, ABA deeplink, and the plan switches on by itself. */}
++              <button
++                onClick={async () => {
++                  haptic();
++                  const url = await botLink('invpay');
++                  if (url) openTelegramLink(url);
++                }}
++                className="w-full mb-3 flex items-center gap-3 p-3 rounded-2xl text-left transition-transform active:scale-[0.98]"
++                style={{ background: 'linear-gradient(135deg, #2AABEE, #1D8FD1)', boxShadow: '0 6px 14px rgba(34,158,217,0.3)' }}
++              >
++                <span className="flex items-center justify-center rounded-xl flex-shrink-0" style={{ width: 36, height: 36, backgroundColor: 'rgba(255,255,255,0.2)' }}>
++                  <Send size={17} color="#FFFFFF" strokeWidth={2.2} />
++                </span>
++                <span className="flex-1 min-w-0">
++                  <span className="block text-sm font-bold text-white">{tr('បង់តាម Telegram Bot', 'Pay in the Telegram bot')}</span>
++                  <span className="block text-[11px] text-white/85">
++                    {tr('KHQR · ABA · បើកដំណើរការភ្លាមៗ', 'KHQR · ABA · switched on instantly')}
++                  </span>
++                </span>
++                <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-white flex-shrink-0" style={{ color: '#1D8FD1' }}>
++                  {tr('បង់', 'Pay')}
++                </span>
++              </button>
++
+               {/* Payment mode tabs */}
+               <div className="flex gap-1.5 mb-3 p-1 rounded-xl" style={{ backgroundColor: COLORS.bgApp }}>
+                 <button
+diff --git a/src/components/TelegramCard.tsx b/src/components/TelegramCard.tsx
+new file mode 100644
+index 0000000..d0ee83e
+--- /dev/null
++++ b/src/components/TelegramCard.tsx
+@@ -0,0 +1,120 @@
++import { useEffect, useState } from 'react';
++import { CheckCircle2, ChevronRight, Loader2, Send } from 'lucide-react';
++import { COLORS, latinFont } from '../lib/theme';
++import { beginLink, botLink, haptic, isInsideTelegram, openTelegramLink } from '../lib/telegram';
++
++interface Props {
++  lang: 'KH' | 'EN';
++  telegramId: number | null | undefined;
++  telegramUsername: string | null | undefined;
++  /** Re-read the profile -- called when the person comes back from the bot. */
++  onRefresh: () => void;
++  compact?: boolean;
++}
++
++/**
++ * Telegram, on Home and Account: connect this account to the SaveIt KH bot,
++ * or -- once connected -- jump to the bot, where income/expense can be
++ * recorded in one message and the plan can be paid for.
++ */
++export default function TelegramCard({ lang, telegramId, telegramUsername, onRefresh, compact }: Props) {
++  const [busy, setBusy] = useState(false);
++  const [error, setError] = useState('');
++  const tr = (kh: string, en: string) => (lang === 'KH' ? kh : en);
++  const linked = Boolean(telegramId);
++
++  // The link is confirmed in Telegram, then the person switches back here:
++  // re-read the profile the moment the page is visible again.
++  useEffect(() => {
++    if (linked) return;
++    const onVisible = () => {
++      if (document.visibilityState === 'visible') onRefresh();
++    };
++    document.addEventListener('visibilitychange', onVisible);
++    return () => document.removeEventListener('visibilitychange', onVisible);
++  }, [linked, onRefresh]);
++
++  const connect = async () => {
++    haptic();
++    setBusy(true);
++    setError('');
++    try {
++      openTelegramLink(await beginLink());
++    } catch {
++      setError(tr('មិនអាចភ្ជាប់បានឥឡូវនេះ សូមព្យាយាមម្ដងទៀត', 'Could not connect right now, please try again'));
++    } finally {
++      setBusy(false);
++    }
++  };
++
++  const openBot = async () => {
++    haptic();
++    const url = await botLink('invoice');
++    if (url) openTelegramLink(url);
++  };
++
++  // Already inside the bot's Mini App and connected: nothing to offer.
++  if (linked && isInsideTelegram() && compact) return null;
++
++  return (
++    <div
++      className="relative overflow-hidden rounded-2xl p-3.5 flex items-center gap-3"
++      style={{
++        background: linked ? '#FFFFFF' : 'linear-gradient(135deg, #2AABEE, #1D8FD1)',
++        boxShadow: linked ? '0 2px 8px rgba(12,68,124,0.08)' : '0 6px 16px rgba(34,158,217,0.35)',
++        border: linked ? `1px solid ${COLORS.border}` : 'none',
++      }}
++    >
++      {!linked && (
++        <div
++          className="pointer-events-none absolute rounded-full"
++          style={{ width: 120, height: 120, top: -50, right: -30, background: 'rgba(255,255,255,0.12)' }}
++        />
++      )}
++      <div
++        className="relative flex items-center justify-center rounded-xl flex-shrink-0"
++        style={{ width: 40, height: 40, background: linked ? '#E7F5FD' : 'rgba(255,255,255,0.2)' }}
++      >
++        <Send size={19} color={linked ? '#229ED9' : '#FFFFFF'} strokeWidth={2.2} />
++      </div>
++      <div className="relative flex-1 min-w-0">
++        {linked ? (
++          <>
++            <p className="text-xs font-bold flex items-center gap-1" style={{ color: COLORS.navy }}>
++              <CheckCircle2 size={13} color={COLORS.success} strokeWidth={2.5} />
++              {tr('បានភ្ជាប់ Telegram', 'Telegram connected')}
++            </p>
++            <p className="text-[11px] truncate" style={{ color: COLORS.muted, ...latinFont }}>
++              {telegramUsername ? `@${telegramUsername}` : `ID ${telegramId}`}
++              {' · '}
++              {tr('កត់ចំណូល/ចំណាយពី bot', 'record from the bot')}
++            </p>
++          </>
++        ) : (
++          <>
++            <p className="text-sm font-bold text-white">{tr('ភ្ជាប់ Telegram', 'Connect Telegram')}</p>
++            <p className="text-[11px] text-white/85 leading-snug">
++              {error ||
++                tr(
++                  'ចូលដោយមិនបាច់លេខសម្ងាត់ · កត់ចំណូលពី bot · បង់តាម KHQR',
++                  'Password-free sign-in · record from the bot · pay by KHQR'
++                )}
++            </p>
++          </>
++        )}
++      </div>
++      <button
++        onClick={linked ? openBot : connect}
++        disabled={busy}
++        className="relative flex items-center gap-0.5 px-3 py-1.5 rounded-full flex-shrink-0 text-[11px] font-bold disabled:opacity-70"
++        style={{
++          backgroundColor: linked ? '#E7F5FD' : '#FFFFFF',
++          color: '#1D8FD1',
++        }}
++      >
++        {busy ? <Loader2 size={13} className="animate-spin" /> : linked ? tr('បើក Bot', 'Open bot') : tr('ភ្ជាប់', 'Connect')}
++        {!busy && <ChevronRight size={13} strokeWidth={2.5} />}
++      </button>
++    </div>
++  );
++}
+diff --git a/src/lib/telegram.ts b/src/lib/telegram.ts
+new file mode 100644
+index 0000000..9a7d19f
+--- /dev/null
++++ b/src/lib/telegram.ts
+@@ -0,0 +1,149 @@
++import { supabase } from './supabaseClient';
++
++/**
++ * Telegram sign-in for KH Invoice, through the `telegram-bridge` edge
++ * function. Two ways in:
++ *   - inside Telegram (opened from the SaveIt KH bot as a Mini App): the
++ *     signed initData Telegram hands the page is exchanged for a session,
++ *     so the person is simply signed in -- no phone, no password;
++ *   - in an ordinary browser: a one-time code is confirmed in the bot, and
++ *     this page polls until it is.
++ */
++
++type TelegramWebApp = {
++  initData: string;
++  initDataUnsafe?: { user?: { id: number; first_name?: string; username?: string } };
++  colorScheme?: 'light' | 'dark';
++  ready: () => void;
++  expand: () => void;
++  setHeaderColor?: (color: string) => void;
++  setBackgroundColor?: (color: string) => void;
++  openTelegramLink?: (url: string) => void;
++  HapticFeedback?: { impactOccurred: (style: 'light' | 'medium' | 'heavy') => void };
++};
++
++declare global {
++  interface Window {
++    Telegram?: { WebApp?: TelegramWebApp };
++  }
++}
++
++const BRIDGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-bridge`;
++
++export function telegramWebApp(): TelegramWebApp | null {
++  const app = window.Telegram?.WebApp;
++  return app && app.initData ? app : null;
++}
++
++export const isInsideTelegram = () => telegramWebApp() !== null;
++
++/** Makes the Mini App feel native: full height, header in the app's colour. */
++export function prepareTelegramChrome(headerColor: string) {
++  const app = telegramWebApp();
++  if (!app) return;
++  try {
++    app.ready();
++    app.expand();
++    app.setHeaderColor?.(headerColor);
++  } catch {
++    /* older Telegram clients lack some of these */
++  }
++}
++
++export function haptic() {
++  try {
++    telegramWebApp()?.HapticFeedback?.impactOccurred('light');
++  } catch {
++    /* not in Telegram */
++  }
++}
++
++async function callBridge<T>(action: string, body: Record<string, unknown> = {}, withAuth = false): Promise<T> {
++  const headers: Record<string, string> = {
++    'Content-Type': 'application/json',
++    apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
++  };
++  if (withAuth) {
++    const { data } = await supabase.auth.getSession();
++    if (data.session) headers.Authorization = `Bearer ${data.session.access_token}`;
++  }
++  const res = await fetch(BRIDGE_URL, { method: 'POST', headers, body: JSON.stringify({ action, ...body }) });
++  const json = await res.json().catch(() => ({}));
++  if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
++  return json as T;
++}
++
++type SessionTokens = { access_token: string; refresh_token: string };
++
++async function adopt(session: SessionTokens) {
++  const { data, error } = await supabase.auth.setSession(session);
++  if (error || !data.session) throw new Error(error?.message || 'Could not sign in');
++  return data.session;
++}
++
++let botUsernamePromise: Promise<string | null> | null = null;
++/** The bot's @username (without @), or null while the bridge isn't set up. */
++export function botUsername(): Promise<string | null> {
++  if (!botUsernamePromise) {
++    botUsernamePromise = callBridge<{ bot_username: string | null }>('config')
++      .then((r) => r.bot_username)
++      .catch(() => {
++        botUsernamePromise = null;
++        return null;
++      });
++  }
++  return botUsernamePromise;
++}
++
++export async function botLink(start?: string) {
++  const name = await botUsername();
++  if (!name) return null;
++  return `https://t.me/${name}${start ? `?start=${start}` : ''}`;
++}
++
++/** Opens a t.me link: in-app when we are a Mini App, a new tab otherwise. */
++export function openTelegramLink(url: string) {
++  const app = telegramWebApp();
++  if (app?.openTelegramLink) app.openTelegramLink(url);
++  else window.open(url, '_blank', 'noopener');
++}
++
++/** Inside Telegram: sign in (creating the account the first time). */
++export async function signInWithMiniApp() {
++  const app = telegramWebApp();
++  if (!app) throw new Error('Not inside Telegram');
++  const r = await callBridge<{ session: SessionTokens }>('miniapp_login', { initData: app.initData });
++  return adopt(r.session);
++}
++
++/**
++ * In a browser: returns the bot link to open, and a promise that resolves
++ * with the session once the person taps "Yes" in the bot. `cancel()` stops
++ * waiting.
++ */
++export async function beginBrowserLogin() {
++  const begin = await callBridge<{ code: string; url: string | null; expires_in: number }>('login_begin');
++  if (!begin.url) throw new Error('bot-not-ready');
++  let stopped = false;
++  const done = (async () => {
++    const deadline = Date.now() + begin.expires_in * 1000;
++    while (!stopped && Date.now() < deadline) {
++      await new Promise((r) => setTimeout(r, 2000));
++      if (stopped) break;
++      const r = await callBridge<{ status: string; session?: SessionTokens }>('login_poll', { code: begin.code }).catch(
++        () => ({ status: 'pending' }) as { status: string; session?: SessionTokens }
++      );
++      if (r.status === 'ok' && r.session) return adopt(r.session);
++      if (r.status === 'expired') break;
++    }
++    throw new Error(stopped ? 'cancelled' : 'expired');
++  })();
++  return { url: begin.url, done, cancel: () => { stopped = true; } };
++}
++
++/** For a signed-in phone account: the bot link that attaches this Telegram. */
++export async function beginLink() {
++  const r = await callBridge<{ url: string | null }>('link_begin', {}, true);
++  if (!r.url) throw new Error('bot-not-ready');
++  return r.url;
++}
+diff --git a/supabase/functions/telegram-bridge/index.ts b/supabase/functions/telegram-bridge/index.ts
+new file mode 100644
+index 0000000..e590d09
+--- /dev/null
++++ b/supabase/functions/telegram-bridge/index.ts
+@@ -0,0 +1,451 @@
++// Telegram <-> KH Invoice.
++//
++// Browser/Mini App calls (no shared secret):
++//   config          -> the bot's username, for t.me links
++//   miniapp_login   -> signed Telegram Mini App initData in, a session out
++//   login_begin     -> a code the person confirms in the bot ("sign in with Telegram")
++//   login_poll      -> the session, once the bot has confirmed that code
++//   link_begin      -> (signed-in user) a code that attaches Telegram to this account
++//
++// SaveIt bot calls (X-Bridge-Secret):
++//   hello, approve, status, plans, add_tx, unpaid, activate
++//
++// Telegram signatures are checked by the SaveIt backend, which holds the bot
++// token; this function never sees the token.
++import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
++
++const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
++const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
++const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
++
++const TRIAL_DAYS = 30;
++const LOGIN_CODE_TTL_MS = 5 * 60 * 1000;
++const LINK_CODE_TTL_MS = 15 * 60 * 1000;
++
++export const PLANS = [
++  { key: "1m", months: 1, price: 2, label_km: "១ ខែ", label_en: "1 Month" },
++  { key: "6m", months: 6, price: 7, label_km: "៦ ខែ", label_en: "6 Months" },
++  { key: "1y", months: 12, price: 14, label_km: "១ ឆ្នាំ", label_en: "1 Year" },
++];
++
++const CORS = {
++  "Access-Control-Allow-Origin": "*",
++  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-bridge-secret",
++  "Access-Control-Allow-Methods": "POST, OPTIONS",
++};
++
++const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
++
++type TgUser = { id: number; username?: string | null; first_name?: string | null };
++type Json = Record<string, unknown>;
++
++class HttpError extends Error {
++  constructor(public status: number, message: string) {
++    super(message);
++  }
++}
++
++function json(body: unknown, status = 200) {
++  return new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
++}
++
++let configCache: { secret: string; verifier_url: string; bot_username: string | null; at: number } | null = null;
++async function bridgeConfig() {
++  if (configCache && Date.now() - configCache.at < 60_000) return configCache;
++  const { data, error } = await admin.from("bridge_config").select("secret, verifier_url, bot_username").eq("id", 1).maybeSingle();
++  if (error || !data) throw new HttpError(503, "Telegram bridge is not configured.");
++  configCache = { ...data, at: Date.now() };
++  return configCache;
++}
++
++function sameSecret(a: string, b: string) {
++  if (!a || a.length !== b.length) return false;
++  let diff = 0;
++  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
++  return diff === 0;
++}
++
++function randomCode(bytes = 18) {
++  const raw = crypto.getRandomValues(new Uint8Array(bytes));
++  return btoa(String.fromCharCode(...raw)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
++}
++
++function botLink(botUsername: string | null, start: string) {
++  return botUsername ? `https://t.me/${botUsername}?start=${start}` : null;
++}
++
++// Cambodia is UTC+7 all year, so "today" for a shop means Phnom Penh's date.
++function phnomPenhDate(offsetDays = 0) {
++  const d = new Date(Date.now() + 7 * 3600_000 + offsetDays * 86_400_000);
++  return d.toISOString().slice(0, 10);
++}
++
++// ------------------------------------------------------------- accounts
++
++async function profileByTelegram(telegramId: number) {
++  const { data } = await admin.from("profiles").select("*").eq("telegram_id", telegramId).maybeSingle();
++  return data;
++}
++
++/** The account for this Telegram user, created (with a fresh trial) the first time. */
++async function ensureAccount(tg: TgUser) {
++  const existing = await profileByTelegram(tg.id);
++  if (existing) {
++    await admin
++      .from("profiles")
++      .update({ telegram_username: tg.username ?? null, telegram_first_name: tg.first_name ?? null })
++      .eq("id", existing.id);
++    return existing;
++  }
++
++  const email = `tg${tg.id}@khinvoice.app`;
++  let userId: string | null = null;
++  const created = await admin.auth.admin.createUser({
++    email,
++    email_confirm: true,
++    password: randomCode(24),
++    user_metadata: { telegram_id: tg.id },
++  });
++  if (created.data?.user) {
++    userId = created.data.user.id;
++  } else {
++    // Already exists (an earlier attempt got this far): recover its id.
++    const link = await admin.auth.admin.generateLink({ type: "magiclink", email });
++    userId = link.data?.user?.id ?? null;
++  }
++  if (!userId) throw new HttpError(500, "Could not create the account.");
++
++  const name = tg.first_name || tg.username || "My Business";
++  // ignoreDuplicates: a profile left behind by an earlier half-finished
++  // attempt keeps its original trial start instead of getting a new one.
++  const { error } = await admin.from("profiles").upsert(
++    {
++      id: userId,
++      business_name: name,
++      username: tg.username ?? null,
++      trial_started_at: new Date().toISOString(),
++      is_locked: false,
++    },
++    { onConflict: "id", ignoreDuplicates: true }
++  );
++  if (error) throw new HttpError(500, error.message);
++  const { data: profile, error: linkError } = await admin
++    .from("profiles")
++    .update({ telegram_id: tg.id, telegram_username: tg.username ?? null, telegram_first_name: tg.first_name ?? null })
++    .eq("id", userId)
++    .select("*")
++    .single();
++  if (linkError) throw new HttpError(500, linkError.message);
++  return profile;
++}
++
++async function emailOf(userId: string) {
++  const { data } = await admin.auth.admin.getUserById(userId);
++  const email = data?.user?.email;
++  if (!email) throw new HttpError(500, "Account has no sign-in identity.");
++  return email;
++}
++
++/** A real Supabase session for this user, without any password. */
++async function sessionFor(userId: string) {
++  const email = await emailOf(userId);
++  const link = await admin.auth.admin.generateLink({ type: "magiclink", email });
++  const tokenHash = link.data?.properties?.hashed_token;
++  if (!tokenHash) throw new HttpError(500, link.error?.message ?? "Could not start a session.");
++  const anon = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false } });
++  const { data, error } = await anon.auth.verifyOtp({ token_hash: tokenHash, type: "magiclink" });
++  if (error || !data.session) throw new HttpError(500, error?.message ?? "Could not start a session.");
++  return { access_token: data.session.access_token, refresh_token: data.session.refresh_token };
++}
++
++function assertUnlocked(profile: { is_locked?: boolean | null }) {
++  if (profile?.is_locked) throw new HttpError(403, "locked");
++}
++
++// ------------------------------------------------------------- status
++
++function trialDaysLeft(trialStartedAt: string | null) {
++  if (!trialStartedAt) return TRIAL_DAYS;
++  const elapsed = Math.floor((Date.now() - new Date(trialStartedAt).getTime()) / 86_400_000);
++  return Math.max(0, TRIAL_DAYS - elapsed);
++}
++
++function sumBy(rows: { type: string; currency: string; amount: number }[], type: string, currency: string) {
++  return rows.filter((r) => r.type === type && r.currency === currency).reduce((a, r) => a + Number(r.amount), 0);
++}
++
++async function summary(db: SupabaseClient, profile: Json) {
++  const userId = profile.id as string;
++  const today = phnomPenhDate();
++  const monthStart = `${today.slice(0, 7)}-01`;
++
++  const [{ data: tx }, { data: invoices }, { data: products }] = await Promise.all([
++    db.from("transactions").select("type, currency, amount, transaction_date").eq("user_id", userId).gte("transaction_date", monthStart),
++    db.from("invoices").select("subtotal, discount, paid_amount, currency, status").eq("user_id", userId).neq("status", "paid"),
++    db.from("products").select("quantity, low_stock_threshold").eq("user_id", userId).eq("is_active", true),
++  ]);
++
++  const month = (tx ?? []) as { type: string; currency: string; amount: number; transaction_date: string }[];
++  const day = month.filter((r) => r.transaction_date === today);
++  let unpaidUSD = 0;
++  let unpaidKHR = 0;
++  let unpaidCount = 0;
++  for (const inv of (invoices ?? []) as { subtotal: number; discount: number; paid_amount: number; currency: string }[]) {
++    const left = Number(inv.subtotal) - Number(inv.discount) - Number(inv.paid_amount);
++    if (left <= 0.005) continue;
++    unpaidCount++;
++    if (inv.currency === "KHR") unpaidKHR += left;
++    else unpaidUSD += left;
++  }
++  const lowStock = ((products ?? []) as { quantity: number; low_stock_threshold: number }[]).filter(
++    (p) => Number(p.quantity) <= Number(p.low_stock_threshold)
++  ).length;
++
++  const expires = profile.subscription_expires_at as string | null;
++  const subscribed = Boolean(expires) && new Date(expires!).getTime() > Date.now();
++  return {
++    linked: true,
++    business_name: profile.business_name,
++    subscribed,
++    subscription_expires_at: expires,
++    trial_days_left: trialDaysLeft(profile.trial_started_at as string | null),
++    trial_days_total: TRIAL_DAYS,
++    today: {
++      income_usd: sumBy(day, "income", "USD"),
++      income_khr: sumBy(day, "income", "KHR"),
++      expense_usd: sumBy(day, "expense", "USD"),
++      expense_khr: sumBy(day, "expense", "KHR"),
++    },
++    month: {
++      income_usd: sumBy(month, "income", "USD"),
++      income_khr: sumBy(month, "income", "KHR"),
++      expense_usd: sumBy(month, "expense", "USD"),
++      expense_khr: sumBy(month, "expense", "KHR"),
++    },
++    unpaid: { count: unpaidCount, usd: unpaidUSD, khr: unpaidKHR },
++    low_stock: lowStock,
++  };
++}
++
++// ------------------------------------------------------------- handlers
++
++async function verifyInitData(initData: string): Promise<TgUser> {
++  const cfg = await bridgeConfig();
++  const res = await fetch(`${cfg.verifier_url.replace(/\/$/, "")}/api/kh-invoice/verify`, {
++    method: "POST",
++    headers: { "Content-Type": "application/json", "X-Bridge-Secret": cfg.secret },
++    body: JSON.stringify({ initData }),
++  });
++  const body = await res.json().catch(() => ({}));
++  if (!res.ok || !body?.ok || !body.user?.id) throw new HttpError(401, "Telegram could not confirm who you are.");
++  return body.user as TgUser;
++}
++
++async function publicAction(action: string, body: Json, req: Request) {
++  if (action === "config") {
++    const cfg = await bridgeConfig();
++    return { bot_username: cfg.bot_username, plans: PLANS };
++  }
++
++  if (action === "miniapp_login") {
++    const tg = await verifyInitData(String(body.initData ?? ""));
++    const profile = await ensureAccount(tg);
++    assertUnlocked(profile);
++    return { session: await sessionFor(profile.id) };
++  }
++
++  if (action === "login_begin") {
++    const cfg = await bridgeConfig();
++    const code = randomCode();
++    await admin.from("telegram_codes").delete().lt("expires_at", new Date(Date.now() - 86_400_000).toISOString());
++    await admin.from("telegram_codes").insert({ code, kind: "login", expires_at: new Date(Date.now() + LOGIN_CODE_TTL_MS).toISOString() });
++    return { code, url: botLink(cfg.bot_username, `inl_${code}`), expires_in: LOGIN_CODE_TTL_MS / 1000 };
++  }
++
++  if (action === "login_poll") {
++    const code = String(body.code ?? "");
++    const { data: row } = await admin.from("telegram_codes").select("*").eq("code", code).eq("kind", "login").maybeSingle();
++    if (!row || row.consumed_at || new Date(row.expires_at).getTime() < Date.now()) return { status: "expired" };
++    if (!row.approved_at || !row.telegram_id) return { status: "pending" };
++    // Claim it before issuing, so one approval can only ever sign in once.
++    const { data: claimed } = await admin
++      .from("telegram_codes")
++      .update({ consumed_at: new Date().toISOString() })
++      .eq("code", code)
++      .is("consumed_at", null)
++      .select("code");
++    if (!claimed?.length) return { status: "expired" };
++    const profile = await ensureAccount({ id: row.telegram_id, username: row.telegram_username, first_name: row.telegram_first_name });
++    assertUnlocked(profile);
++    return { status: "ok", session: await sessionFor(profile.id) };
++  }
++
++  if (action === "link_begin") {
++    const auth = req.headers.get("Authorization") ?? "";
++    const { data } = await admin.auth.getUser(auth.replace(/^Bearer\s+/i, ""));
++    if (!data?.user) throw new HttpError(401, "Sign in first.");
++    const cfg = await bridgeConfig();
++    const code = randomCode();
++    await admin.from("telegram_codes").insert({
++      code,
++      kind: "link",
++      user_id: data.user.id,
++      expires_at: new Date(Date.now() + LINK_CODE_TTL_MS).toISOString(),
++    });
++    return { url: botLink(cfg.bot_username, `inlk_${code}`) };
++  }
++
++  throw new HttpError(400, "Unknown action.");
++}
++
++function tgFrom(body: Json): TgUser {
++  const t = (body.telegram ?? {}) as Json;
++  const id = Number(t.id ?? body.telegram_id);
++  if (!Number.isSafeInteger(id) || id <= 0) throw new HttpError(400, "telegram id required");
++  return { id, username: (t.username as string) ?? null, first_name: (t.first_name as string) ?? null };
++}
++
++async function bridgeAction(action: string, body: Json) {
++  if (action === "hello") {
++    const username = String(body.bot_username ?? "").replace(/^@/, "");
++    if (!/^[A-Za-z0-9_]{5,64}$/.test(username)) throw new HttpError(400, "bad bot username");
++    await admin.from("bridge_config").update({ bot_username: username, updated_at: new Date().toISOString() }).eq("id", 1);
++    configCache = null;
++    return { ok: true };
++  }
++
++  if (action === "plans") return { plans: PLANS };
++
++  if (action === "approve") {
++    const tg = tgFrom(body);
++    const code = String(body.code ?? "");
++    const { data: row } = await admin.from("telegram_codes").select("*").eq("code", code).maybeSingle();
++    if (!row || row.consumed_at || row.approved_at || new Date(row.expires_at).getTime() < Date.now()) {
++      return { ok: false, error: "expired" };
++    }
++    if (row.kind === "login") {
++      const existing = await profileByTelegram(tg.id);
++      if (existing?.is_locked) return { ok: false, error: "locked" };
++      await admin
++        .from("telegram_codes")
++        .update({ approved_at: new Date().toISOString(), telegram_id: tg.id, telegram_username: tg.username, telegram_first_name: tg.first_name })
++        .eq("code", code)
++        .is("approved_at", null);
++      return { ok: true, kind: "login", is_new: !existing };
++    }
++    // kind = link: attach this Telegram to the account that asked for it.
++    const other = await profileByTelegram(tg.id);
++    if (other && other.id !== row.user_id) return { ok: false, error: "telegram_in_use", business_name: other.business_name };
++    const { data: target } = await admin.from("profiles").select("id, business_name").eq("id", row.user_id).maybeSingle();
++    if (!target) return { ok: false, error: "expired" };
++    await admin
++      .from("profiles")
++      .update({ telegram_id: tg.id, telegram_username: tg.username, telegram_first_name: tg.first_name })
++      .eq("id", row.user_id);
++    await admin.from("telegram_codes").update({ approved_at: new Date().toISOString(), consumed_at: new Date().toISOString(), telegram_id: tg.id }).eq("code", code);
++    return { ok: true, kind: "link", business_name: target.business_name };
++  }
++
++  if (action === "status") {
++    const profile = await profileByTelegram(tgFrom(body).id);
++    if (!profile) return { linked: false, trial_days_total: TRIAL_DAYS, plans: PLANS };
++    return { ...(await summary(admin, profile)), plans: PLANS };
++  }
++
++  if (action === "add_tx") {
++    const profile = await profileByTelegram(tgFrom(body).id);
++    if (!profile) return { ok: false, error: "not_linked" };
++    if (profile.is_locked) return { ok: false, error: "locked" };
++    const type = body.type === "expense" ? "expense" : "income";
++    const currency = body.currency === "KHR" ? "KHR" : "USD";
++    const amount = Number(body.amount);
++    if (!Number.isFinite(amount) || amount <= 0 || amount > 1e12) return { ok: false, error: "bad_amount" };
++    const description = String(body.description ?? "").trim().slice(0, 200) || (type === "income" ? "ចំណូល (Telegram)" : "ចំណាយ (Telegram)");
++    const { error } = await admin.from("transactions").insert({
++      user_id: profile.id,
++      type,
++      description,
++      quantity: 1,
++      unit_price: amount,
++      currency,
++      transaction_date: phnomPenhDate(),
++      source: "manual",
++    });
++    if (error) return { ok: false, error: error.message };
++    return { ok: true, ...(await summary(admin, profile)) };
++  }
++
++  if (action === "unpaid") {
++    const profile = await profileByTelegram(tgFrom(body).id);
++    if (!profile) return { ok: false, error: "not_linked" };
++    const { data } = await admin
++      .from("invoices")
++      .select("invoice_number, customer_name, invoice_date, subtotal, discount, paid_amount, currency, status")
++      .eq("user_id", profile.id)
++      .neq("status", "paid")
++      .order("invoice_date", { ascending: false })
++      .limit(10);
++    const list = (data ?? [])
++      .map((i) => ({ ...i, left: Number(i.subtotal) - Number(i.discount) - Number(i.paid_amount) }))
++      .filter((i) => i.left > 0.005);
++    return { ok: true, invoices: list };
++  }
++
++  if (action === "activate") {
++    const tg = tgFrom(body);
++    const plan = PLANS.find((p) => p.key === body.plan);
++    if (!plan) throw new HttpError(400, "unknown plan");
++    const ref = String(body.ref ?? "").slice(0, 120);
++    if (!ref) throw new HttpError(400, "ref required");
++
++    // Idempotent on the payment reference: a retried call must not add months twice.
++    const profile = await ensureAccount(tg);
++    const { data: prior } = await admin.from("subscription_requests").select("id, status").eq("transaction_id", ref).maybeSingle();
++    let requestId = prior?.id as string | undefined;
++    if (!prior) {
++      const { data: inserted, error } = await admin
++        .from("subscription_requests")
++        .insert({
++          user_id: profile.id,
++          plan: plan.key,
++          amount: plan.price,
++          description: "Paid via SaveIt KH Telegram bot",
++          transaction_id: ref,
++          payment_date: phnomPenhDate(),
++          status: "pending",
++        })
++        .select("id")
++        .single();
++      if (error) throw new HttpError(500, error.message);
++      requestId = inserted.id;
++    }
++    if (prior?.status !== "confirmed") {
++      // The existing AFTER UPDATE trigger extends subscription_expires_at.
++      await admin.from("subscription_requests").update({ status: "confirmed" }).eq("id", requestId).eq("status", "pending");
++    }
++    const { data: after } = await admin.from("profiles").select("subscription_expires_at").eq("id", profile.id).single();
++    return { ok: true, subscription_expires_at: after?.subscription_expires_at ?? null, plan: plan.key };
++  }
++
++  throw new HttpError(400, "Unknown action.");
++}
++
++Deno.serve(async (req) => {
++  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
++  if (req.method !== "POST") return json({ error: "POST only" }, 405);
++  try {
++    const body = (await req.json().catch(() => ({}))) as Json;
++    const action = String(body.action ?? "");
++    const presented = req.headers.get("X-Bridge-Secret");
++    if (presented !== null) {
++      const cfg = await bridgeConfig();
++      if (!sameSecret(presented, cfg.secret)) return json({ error: "forbidden" }, 403);
++      return json(await bridgeAction(action, body));
++    }
++    return json(await publicAction(action, body, req));
++  } catch (err) {
++    const status = err instanceof HttpError ? err.status : 500;
++    if (status >= 500) console.error("telegram-bridge:", err);
++    return json({ error: err instanceof Error ? err.message : String(err) }, status);
++  }
++});
+diff --git a/supabase/migrations/20260926150000_telegram_bridge.sql b/supabase/migrations/20260926150000_telegram_bridge.sql
+new file mode 100644
+index 0000000..17c4b56
+--- /dev/null
++++ b/supabase/migrations/20260926150000_telegram_bridge.sql
+@@ -0,0 +1,72 @@
++-- Telegram sign-in + SaveIt bot bridge.
++--
++-- profiles.telegram_id ties an account to one Telegram user. It is filled
++-- by the telegram-bridge edge function (service role) only: a person proves
++-- who they are either with Mini App initData or by confirming in the bot.
++
++alter table public.profiles add column if not exists telegram_id bigint unique;
++alter table public.profiles add column if not exists telegram_username text;
++alter table public.profiles add column if not exists telegram_first_name text;
++
++-- Users may still edit their own profile, but never the Telegram link
++-- (anyone could claim another person's Telegram id) nor their billing
++-- state (anyone could grant themselves a subscription). Those change only
++-- through the service role or the SECURITY DEFINER subscription trigger.
++create or replace function public.protect_telegram_link()
++returns trigger language plpgsql set search_path = public as $$
++begin
++  if coalesce(auth.role(), '') = 'service_role' or current_user = 'postgres' then
++    return new;
++  end if;
++  if tg_op = 'INSERT' then
++    new.telegram_id := null;
++    new.telegram_username := null;
++    new.telegram_first_name := null;
++    new.subscription_expires_at := null;
++    new.is_locked := false;
++    new.trial_started_at := now();
++  else
++    new.telegram_id := old.telegram_id;
++    new.telegram_username := old.telegram_username;
++    new.telegram_first_name := old.telegram_first_name;
++    new.subscription_expires_at := old.subscription_expires_at;
++    new.is_locked := old.is_locked;
++    new.trial_started_at := old.trial_started_at;
++  end if;
++  return new;
++end; $$;
++
++drop trigger if exists trg_protect_telegram_link on public.profiles;
++create trigger trg_protect_telegram_link
++  before insert or update on public.profiles
++  for each row execute function public.protect_telegram_link();
++
++-- One row: the shared secret the SaveIt backend signs its calls with, where
++-- that backend lives, and the bot's username for t.me links. Service role
++-- only (RLS on, no policies).
++create table if not exists public.bridge_config (
++  id integer primary key default 1 check (id = 1),
++  secret text not null,
++  verifier_url text not null,
++  bot_username text,
++  updated_at timestamptz not null default now()
++);
++alter table public.bridge_config enable row level security;
++
++-- Short-lived codes for "sign in with Telegram" from an ordinary browser
++-- (kind = 'login') and for attaching Telegram to an existing phone account
++-- (kind = 'link'). Service role only.
++create table if not exists public.telegram_codes (
++  code text primary key,
++  kind text not null check (kind in ('login', 'link')),
++  user_id uuid references auth.users(id) on delete cascade,
++  telegram_id bigint,
++  telegram_username text,
++  telegram_first_name text,
++  approved_at timestamptz,
++  consumed_at timestamptz,
++  expires_at timestamptz not null,
++  created_at timestamptz not null default now()
++);
++alter table public.telegram_codes enable row level security;
++create index if not exists telegram_codes_expires_idx on public.telegram_codes (expires_at);
+-- 
+2.43.0
+
