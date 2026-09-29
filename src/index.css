@@ -17,6 +17,14 @@
 :root {
   color-scheme: dark;
 
+  /* Telegram's Mini App SDK overwrites this (see telegramWebApp.ts) with the
+     WebView's own stable viewport height in px, so `h-[var(--tg-vh)]` fills
+     exactly what Telegram gives the app -- not the taller 100vh a phone
+     reports, which used to leave a dead strip (or scrollbar) below the app
+     the size of Telegram's own header/bottom chrome. Outside Telegram,
+     100dvh already tracks a mobile browser's own chrome correctly. */
+  --tg-vh: 100dvh;
+
   --c-white: 255 255 255;
 
   /* Neutral ramp — dark theme: 950 is the page, 50 is the brightest text. */
@@ -65,6 +73,16 @@
   --c-error-700: 185 28 28;
   --c-error-800: 153 27 27;
   --c-error-900: 127 29 29;
+}
+
+/* Room for a phone's own notch/home-indicator when Telegram (or a browser's
+   own PWA chrome) draws this page edge-to-edge; 0 on every device without
+   one, via env()'s built-in fallback. */
+body {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
 }
 
 /* Light theme: invert the neutral ramp and flip the strongest foreground. */

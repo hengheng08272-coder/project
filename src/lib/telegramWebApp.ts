@@ -10,10 +10,17 @@
 interface TelegramWebApp {
   initData: string;
   colorScheme: 'light' | 'dark';
+  viewportHeight: number;
+  viewportStableHeight: number;
   ready: () => void;
   expand: () => void;
   setHeaderColor: (color: string) => void;
   setBackgroundColor: (color: string) => void;
+  onEvent: (event: 'viewportChanged', handler: () => void) => void;
+  offEvent: (event: 'viewportChanged', handler: () => void) => void;
+  // Bot API 7.7+; guarded at every call site since older Telegram clients
+  // (and Telegram Desktop for a while after) don't have it.
+  disableVerticalSwipes?: () => void;
 }
 
 declare global {
@@ -32,6 +39,18 @@ export const isTelegramMiniApp = Boolean(webApp()?.initData);
 /** The raw, signed init data string the backend verifies -- see telegramLogin.js's Mini App branch. */
 export const telegramInitData = webApp()?.initData ?? '';
 
+/**
+ * Keeps --tg-vh (see index.css) equal to the WebView's own stable viewport
+ * height, in px, so `h-[var(--tg-vh)]` fills exactly what Telegram gives the
+ * Mini App -- not the taller `100vh`/`100dvh` a phone browser would report,
+ * which used to leave a dead strip below the app (or a scrollbar) the size
+ * of Telegram's own header/bottom chrome.
+ */
+function syncViewportHeight(app: TelegramWebApp) {
+  const height = app.viewportStableHeight || app.viewportHeight || window.innerHeight;
+  document.documentElement.style.setProperty('--tg-vh', `${height}px`);
+}
+
 /** Tells Telegram the page is ready to be shown, and asks for the full-height layout. */
 export function prepareTelegramMiniApp() {
   const app = webApp();
@@ -43,4 +62,10 @@ export function prepareTelegramMiniApp() {
   // the WebView chrome.
   app.setHeaderColor('#020617');
   app.setBackgroundColor('#020617');
+  syncViewportHeight(app);
+  app.onEvent('viewportChanged', () => syncViewportHeight(app));
+  // The app already scrolls its own panes; Telegram's own pull-down-to-close
+  // swipe fighting that on every scroll-to-top is the "app feels the wrong
+  // size / keeps closing" complaint this silences.
+  app.disableVerticalSwipes?.();
 }
