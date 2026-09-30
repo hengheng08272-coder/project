@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 
 import { Header } from '@/components/Header';
 import { SetupNotice } from '@/components/SetupNotice';
@@ -40,6 +40,12 @@ function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [subStatus, setSubStatus] = useState<SubscriptionStatusResult | null>(null);
   const [subLoading, setSubLoading] = useState(true);
+  // Only set inside Telegram, when the Mini App's own silent sign-in (below)
+  // fails -- AuthPage's email/password form and Telegram Login Widget button
+  // are both meaningless here (no browser chrome to type into, and the
+  // widget needs a domain Telegram was never told to allow for the Mini
+  // App's own origin), so that screen never renders inside the bot.
+  const [miniAppSignInFailed, setMiniAppSignInFailed] = useState(false);
   const { t } = useLanguage();
 
   useEffect(() => {
@@ -57,14 +63,19 @@ function App() {
       // showing AuthPage's email/password form at all.
       if (!data.session && isTelegramMiniApp) {
         try {
-          const { email, token_hash } = await telegramMiniAppLogin(telegramInitData);
-          const { data: otpData } = await supabase.auth.verifyOtp({ email, token_hash, type: 'magiclink' });
+          // token_hash alone identifies the link Supabase just minted for
+          // this email; passing email too makes verifyOtp reject the whole
+          // call ("Only the token_hash and type should be provided"), which
+          // used to send every Mini App open straight to AuthPage's login
+          // form instead of signing in silently.
+          const { token_hash } = await telegramMiniAppLogin(telegramInitData);
+          const { data: otpData } = await supabase.auth.verifyOtp({ token_hash, type: 'magiclink' });
           setSession(otpData.session ?? null);
           setSessionLoading(false);
           return;
         } catch (err) {
           console.error('Telegram Mini App sign-in failed:', err);
-          // Falls through to AuthPage -- better than a stuck loading screen.
+          setMiniAppSignInFailed(true);
         }
       }
       setSession(data.session);
@@ -111,8 +122,28 @@ function App() {
 
   if (sessionLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-dark-950">
+      <div className="flex h-[var(--tg-vh)] items-center justify-center bg-dark-950">
         <Loader2 className="h-6 w-6 animate-spin text-primary-500" />
+      </div>
+    );
+  }
+
+  // Inside the bot, a failed silent sign-in gets its own tiny screen -- never
+  // AuthPage, whose email/password form and Telegram Login Widget button are
+  // both dead ends in a WebView with no address bar to carry a widget's own
+  // domain check, and are shown to the wrong person besides.
+  if (!session && isTelegramMiniApp && miniAppSignInFailed) {
+    return (
+      <div className="flex h-[var(--tg-vh)] flex-col items-center justify-center gap-3 bg-dark-950 p-6 text-center">
+        <AlertTriangle className="h-8 w-8 text-error-400" />
+        <p className="text-sm font-medium text-white">{t('auth.miniAppFailedTitle')}</p>
+        <p className="max-w-xs text-xs text-dark-400">{t('auth.miniAppFailedBody')}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-1 rounded-lg bg-dark-800 px-4 py-2 text-xs font-medium text-dark-300 transition-colors hover:bg-dark-700"
+        >
+          {t('auth.miniAppRetry')}
+        </button>
       </div>
     );
   }
@@ -124,7 +155,7 @@ function App() {
 
   if (subLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-dark-950">
+      <div className="flex h-[var(--tg-vh)] items-center justify-center bg-dark-950">
         <Loader2 className="h-6 w-6 animate-spin text-primary-500" />
       </div>
     );
@@ -170,7 +201,7 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-dark-950 text-white">
+    <div className="flex h-[var(--tg-vh)] overflow-hidden bg-dark-950 text-white">
       <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} collapsed={sidebarCollapsed} isAdmin={isAdmin} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Header

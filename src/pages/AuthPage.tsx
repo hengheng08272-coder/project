@@ -60,8 +60,11 @@ export function AuthPage() {
     setError('');
     setLoading(true);
     try {
-      const { email, token_hash } = await telegramLogin(payload as unknown as Record<string, unknown>);
-      const { error: otpError } = await supabase.auth.verifyOtp({ email, token_hash, type: 'magiclink' });
+      // token_hash alone is the whole credential -- pairing it with email
+      // makes Supabase reject the call ("Only the token_hash and type should
+      // be provided"), which is why the widget button used to fail outright.
+      const { token_hash } = await telegramLogin(payload as unknown as Record<string, unknown>);
+      const { error: otpError } = await supabase.auth.verifyOtp({ token_hash, type: 'magiclink' });
       if (otpError) throw otpError;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Telegram sign-in failed.');
@@ -71,7 +74,7 @@ export function AuthPage() {
 
   if (checkEmail) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-dark-950 p-4">
+      <div className="flex min-h-[var(--tg-vh)] items-center justify-center bg-dark-950 p-4">
         <div className="w-full max-w-sm rounded-2xl border border-dark-800 bg-dark-900/60 p-6 text-center">
           <MailCheck className="mx-auto mb-3 h-10 w-10 text-success-400" />
           <h2 className="mb-1 text-base font-bold text-white">{t('auth.checkEmailTitle')}</h2>
@@ -91,7 +94,7 @@ export function AuthPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-dark-950 p-4">
+    <div className="flex min-h-[var(--tg-vh)] items-center justify-center bg-dark-950 p-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
           <AppLogo size={48} className="glow" />

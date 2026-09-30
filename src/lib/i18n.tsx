@@ -66,6 +66,9 @@ const en = {
   'auth.backToSignIn': 'Back to sign in',
   'auth.signOut': 'Sign out',
   'auth.orEmail': 'or use email',
+  'auth.miniAppFailedTitle': "Couldn't sign you in",
+  'auth.miniAppFailedBody': 'Close this and reopen it from the bot. If it keeps happening, message the operator.',
+  'auth.miniAppRetry': 'Try again',
 
   'subscribe.title': 'Choose a plan',
   'subscribe.tagline': 'Pick a plan to unlock your workspace',
@@ -548,6 +551,9 @@ const km: Record<TranslationKey, string> = {
   'auth.backToSignIn': 'ត្រឡប់ទៅចូលប្រើ',
   'auth.signOut': 'ចាកចេញ',
   'auth.orEmail': 'ឬប្រើអ៊ីមែល',
+  'auth.miniAppFailedTitle': 'ចូលប្រើមិនបានទេ',
+  'auth.miniAppFailedBody': 'សូមបិទហើយបើកម្តងទៀតពី bot។ បើនៅតែកើតឡើង សូមទាក់ទងអ្នកគ្រប់គ្រង។',
+  'auth.miniAppRetry': 'សាកម្តងទៀត',
 
   'subscribe.title': 'ជ្រើសរើសកម្រិតជាវ',
   'subscribe.tagline': 'ជ្រើសរើសកម្រិតមួយ ដើម្បីចូលប្រើ workspace របស់អ្នក',
