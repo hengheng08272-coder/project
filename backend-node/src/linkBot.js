@@ -15,9 +15,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
+import { askAI } from "./ai.js";
 import { config } from "./config.js";
-import { askClaude } from "./claude.js";
 import { actionForLabel, languageKeyboard, mainKeyboard, progressBar, texts } from "./botText.js";
 import * as botDeliver from "./botDeliver.js";
 import * as botJobs from "./botJobs.js";

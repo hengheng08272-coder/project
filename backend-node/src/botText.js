@@ -62,6 +62,14 @@ const MENU = [
   },
   { action: "emoji", emoji: "sparkle", style: "primary", km: "✨ Emoji Maker", en: "✨ Emoji Maker", aliases: ["✨ Emoji Maker · បង្កើត Emoji"] },
   {
+   {
+  action: "ai",
+  emoji: "robot",
+  style: "primary",
+  km: "🤖 AI Dashboard",
+  en: "🤖 AI Dashboard",
+  aliases: ["🤖 AI", "🤖 AI Dashboard · AI"],
+},
     action: "translate",
     emoji: "m_language",
     style: "success",
