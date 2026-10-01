@@ -17,6 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { config } from "./config.js";
+import { askClaude } from "./claude.js";
 import { actionForLabel, languageKeyboard, mainKeyboard, progressBar, texts } from "./botText.js";
 import * as botDeliver from "./botDeliver.js";
 import * as botJobs from "./botJobs.js";
@@ -338,6 +339,34 @@ export async function handleMessage(message) {
     case "emoji":
       return emojiMaker.ask(chatId, user);
     case "translate":
+
+    case "claude": {
+  const prompt = text.replace(/^\/claude(?:@\w+)?\s*/i, "").trim();
+
+  if (!prompt) {
+    return send(
+      chatId,
+      "🤖 ប្រើ៖ /claude សំណួររបស់អ្នក\n\nឧទាហរណ៍៖\n/claude សួស្តី Claude"
+    );
+  }
+
+  try {
+    await send(chatId, "⏳ Claude កំពុងគិត...");
+
+    const answer = await askClaude(prompt);
+
+    return send(
+      chatId,
+      answer ? `🤖 Claude:\n\n${answer.slice(0, 4000)}` : "⚠️ Claude មិនបានផ្តល់ចម្លើយ។"
+    );
+  } catch (err) {
+    console.error("Claude command failed:", err?.message ?? err);
+    return send(
+      chatId,
+      `⚠️ Claude error: ${String(err?.message ?? err).slice(0, 500)}`
+    );
+  }
+}
       return translate.ask(chatId, user);
     case "invoice":
       return khInvoice.enterSection(chatId, user);
@@ -655,6 +684,7 @@ function commandAction(text) {
     case "/invoice": return "invoice";
     case "/emoji": return "emoji";
     case "/translate": return "translate";
+        case "/claude": return "claude";
     default: return null;
   }
 }
