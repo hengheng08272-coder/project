@@ -30,3 +30,6 @@ venv/
 
 # Node backend
 backend-node/node_modules
+
+# Classroom test script settings (copy of classroom.env.example)
+classroom.env

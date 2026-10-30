@@ -223,6 +223,7 @@ const HELP = [
   "",
   "<b>សិស្ស</b>",
   "/join [ក្រុម] — ចុះឈ្មោះក្នុងថ្នាក់ (ឧ. /join A)",
+  "/chatid — បង្ហាញ ID របស់ group (សម្រាប់ classroom.env)",
   "/leave — ដកឈ្មោះចេញ",
   "",
   "<b>គ្រូ (Admin ក្រុម)</b>",
@@ -272,6 +273,11 @@ export async function handleGroupMessage(message) {
   if (command === "join") {
     await addMember(chatId, from, args.split(/\s+/)[0] || null);
     await send(chatId, `✅ ${mention({ user_id: from.id, first_name: from.first_name })} បានចុះឈ្មោះ${args ? ` (ក្រុម ${escapeHtml(args.split(/\s+/)[0])})` : ""}`);
+    return true;
+  }
+  // The group's id, for classroom.env (scripts/classroom-test.mjs).
+  if (command === "chatid") {
+    await send(chatId, `🆔 Chat ID: <code>${chatId}</code>`);
     return true;
   }
   if (command === "leave") {

@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/server.js",
     "login": "node src/login.js",
+    "classroom": "node scripts/classroom-test.mjs",
     "migrate:s3-to-r2": "node src/migrate-s3-to-r2.js"
   },
   "dependencies": {

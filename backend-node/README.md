@@ -175,6 +175,28 @@ chain is resolved first and refused if it lands on a loopback, link-local or
 private address: this process holds the Supabase service-role key and the R2
 secret, so a pasted URL must not be able to point it at its own network.
 
+## Classroom: testing and sending homework
+
+Group commands are listed by `/class` in the class group. To check the
+setup and send homework from your own computer:
+
+1. Copy `classroom.env.example` to `classroom.env` (git-ignored) and fill in
+   the bot token, the group's id (send `/chatid` in the group) and the
+   Supabase URL + service_role key.
+2. `npm install`, then:
+
+```
+npm run classroom -- check                  # bot, group, webhook, tables, roster
+npm run classroom -- students               # who is registered
+npm run classroom -- homework --dry-run     # who would get HOMEWORK_TEXT
+npm run classroom -- homework "Page 25, 1-10"
+npm run classroom -- stats                  # who has read the latest homework
+```
+
+Homework is saved as the next lesson (students can reopen it with `/lesson`),
+posted in the group and DMed to each student with a ✅ read button. Students
+who never pressed Start in the bot cannot be DMed; the script lists them.
+
 ## Notes on the Telegram library
 
 This uses [teleproto](https://www.npmjs.com/package/teleproto), the maintained
