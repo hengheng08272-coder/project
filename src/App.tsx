@@ -7,6 +7,7 @@ import { SetupNotice } from '@/components/SetupNotice';
 import { Sidebar } from '@/components/Sidebar';
 import { AdminPage } from '@/pages/AdminPage';
 import { AuthPage, NewPasswordPage } from '@/pages/AuthPage';
+import { BotGroupsPage } from '@/pages/BotGroupsPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { DownloadsPage } from '@/pages/DownloadsPage';
 import { GroupsPage } from '@/pages/GroupsPage';
@@ -105,6 +106,7 @@ function App() {
     urllists: { title: t('page.urllists.title'), subtitle: t('page.urllists.subtitle') },
     settings: { title: t('page.settings.title'), subtitle: t('page.settings.subtitle') },
     guide: { title: t('page.guide.title'), subtitle: t('page.guide.subtitle') },
+    botgroups: { title: t('page.botgroups.title'), subtitle: t('page.botgroups.subtitle') },
     admin: { title: 'Admin', subtitle: 'Payments, pricing and subscribers' },
   };
 
@@ -170,6 +172,8 @@ function App() {
         );
       case 'guide':
         return <GuidePage onNavigate={setCurrentPage} />;
+      case 'botgroups':
+        return isAdmin ? <BotGroupsPage /> : null;
       case 'admin':
         return isAdmin ? <AdminPage /> : null;
     }
