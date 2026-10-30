@@ -6,7 +6,7 @@ import { Header } from '@/components/Header';
 import { SetupNotice } from '@/components/SetupNotice';
 import { Sidebar } from '@/components/Sidebar';
 import { AdminPage } from '@/pages/AdminPage';
-import { AuthPage } from '@/pages/AuthPage';
+import { AuthPage, NewPasswordPage } from '@/pages/AuthPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { DownloadsPage } from '@/pages/DownloadsPage';
 import { GroupsPage } from '@/pages/GroupsPage';
@@ -37,6 +37,8 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
+  // Opened from a password-reset email: ask for the new password first.
+  const [recovering, setRecovering] = useState(() => window.location.hash.includes('type=recovery'));
   const [isAdmin, setIsAdmin] = useState(false);
   const [subStatus, setSubStatus] = useState<SubscriptionStatusResult | null>(null);
   const [subLoading, setSubLoading] = useState(true);
@@ -72,7 +74,10 @@ function App() {
     });
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, next) => setSession(next));
+    } = supabase.auth.onAuthStateChange((event, next) => {
+      if (event === 'PASSWORD_RECOVERY') setRecovering(true);
+      setSession(next);
+    });
     return () => subscription.unsubscribe();
   }, []);
 
@@ -120,6 +125,7 @@ function App() {
   // The Settings and R2/Telegram tables are still one shared dataset today
   // (multi-tenant data isolation is a separate, not-yet-built phase) -- this
   // gate only decides who gets *past the paywall*, not who sees whose data.
+  if (session && recovering) return <NewPasswordPage onDone={() => setRecovering(false)} />;
   if (!session) return <AuthPage />;
 
   if (subLoading) {

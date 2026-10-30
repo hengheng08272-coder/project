@@ -11,7 +11,7 @@ import { useLanguage } from '@/lib/i18n';
 import { supabase } from '@/lib/supabase';
 import { telegramLogin } from '@/lib/backend';
 
-type Mode = 'signin' | 'signup';
+type Mode = 'signin' | 'signup' | 'reset';
 
 /**
  * The only screen a visitor sees before they've authenticated. Each
@@ -27,6 +27,7 @@ export function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [checkEmail, setCheckEmail] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,6 +39,17 @@ export function AuthPage() {
     }
 
     setLoading(true);
+    if (mode === 'reset') {
+      // The link comes back to this same page; App shows NewPasswordPage
+      // when Supabase reports the PASSWORD_RECOVERY sign-in.
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin,
+      });
+      setLoading(false);
+      if (resetError) setError(resetError.message);
+      else setResetSent(true);
+      return;
+    }
     const result =
       mode === 'signin'
         ? await supabase.auth.signInWithPassword({ email, password })
@@ -69,16 +81,17 @@ export function AuthPage() {
     setLoading(false);
   };
 
-  if (checkEmail) {
+  if (checkEmail || resetSent) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-dark-950 p-4">
         <div className="w-full max-w-sm rounded-2xl border border-dark-800 bg-dark-900/60 p-6 text-center">
           <MailCheck className="mx-auto mb-3 h-10 w-10 text-success-400" />
           <h2 className="mb-1 text-base font-bold text-white">{t('auth.checkEmailTitle')}</h2>
-          <p className="mb-5 text-sm text-dark-400">{t('auth.checkEmailBody')}</p>
+          <p className="mb-5 text-sm text-dark-400">{t(resetSent ? 'auth.resetSentBody' : 'auth.checkEmailBody')}</p>
           <button
             onClick={() => {
               setCheckEmail(false);
+              setResetSent(false);
               setMode('signin');
             }}
             className="w-full rounded-lg bg-dark-800 px-4 py-2.5 text-sm font-medium text-dark-300 transition-colors hover:bg-dark-700"
@@ -117,6 +130,13 @@ export function AuthPage() {
             </p>
           )}
 
+          {mode === 'reset' && (
+            <div className="text-center">
+              <p className="text-sm font-bold text-white">{t('auth.resetTitle')}</p>
+              <p className="mt-1 text-xs text-dark-500">{t('auth.resetBody')}</p>
+            </div>
+          )}
+
           {error && (
             <div className="flex items-start gap-2 rounded-lg border border-error-500/30 bg-error-500/10 px-3 py-2 text-xs text-error-300">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -139,6 +159,7 @@ export function AuthPage() {
             />
           </div>
 
+          {mode !== 'reset' && (
           <div>
             <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-dark-400">
               <Lock className="h-3.5 w-3.5" /> {t('auth.password')}
@@ -153,7 +174,20 @@ export function AuthPage() {
               className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-white outline-none transition-colors placeholder-dark-600 focus:border-primary-500"
               placeholder="••••••••"
             />
+            {mode === 'signin' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError('');
+                  setMode('reset');
+                }}
+                className="mt-1.5 text-xs text-primary-400 hover:text-primary-300"
+              >
+                {t('auth.forgotPassword')}
+              </button>
+            )}
           </div>
+          )}
 
           {mode === 'signup' && (
             <div>
@@ -179,9 +213,23 @@ export function AuthPage() {
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-50"
           >
             {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-            {mode === 'signin' ? t('auth.signIn') : t('auth.signUp')}
+            {mode === 'signin' ? t('auth.signIn') : mode === 'signup' ? t('auth.signUp') : t('auth.sendResetLink')}
           </button>
 
+          {mode === 'reset' ? (
+            <p className="text-center text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setError('');
+                  setMode('signin');
+                }}
+                className="font-medium text-primary-400 hover:text-primary-300"
+              >
+                {t('auth.backToSignIn')}
+              </button>
+            </p>
+          ) : (
           <p className="text-center text-xs text-dark-500">
             {mode === 'signin' ? t('auth.noAccount') : t('auth.haveAccount')}{' '}
             <button
@@ -195,8 +243,100 @@ export function AuthPage() {
               {mode === 'signin' ? t('auth.switchToSignUp') : t('auth.switchToSignIn')}
             </button>
           </p>
+          )}
         </form>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Shown after opening a password-reset link: Supabase has already signed
+ * the user in for this one purpose, so updateUser can set the new password.
+ */
+export function NewPasswordPage({ onDone }: { onDone: () => void }) {
+  const { t } = useLanguage();
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (password !== confirmPassword) {
+      setError(t('auth.passwordMismatch'));
+      return;
+    }
+    setLoading(true);
+    const { error: updateError } = await supabase.auth.updateUser({ password });
+    setLoading(false);
+    if (updateError) setError(updateError.message);
+    else onDone();
+  };
+
+  const inputClass =
+    'w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-white outline-none transition-colors placeholder-dark-600 focus:border-primary-500';
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-dark-950 p-4">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-sm space-y-4 rounded-2xl border border-dark-800 bg-dark-900/60 p-6"
+      >
+        <div className="flex flex-col items-center gap-3 text-center">
+          <AppLogo size={40} />
+          <p className="text-base font-bold text-white">{t('auth.newPasswordTitle')}</p>
+        </div>
+
+        {error && (
+          <div className="flex items-start gap-2 rounded-lg border border-error-500/30 bg-error-500/10 px-3 py-2 text-xs text-error-300">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div>
+          <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-dark-400">
+            <Lock className="h-3.5 w-3.5" /> {t('auth.newPassword')}
+          </label>
+          <input
+            type="password"
+            required
+            minLength={6}
+            autoComplete="new-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className={inputClass}
+            placeholder="••••••••"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-dark-400">
+            <Lock className="h-3.5 w-3.5" /> {t('auth.confirmPassword')}
+          </label>
+          <input
+            type="password"
+            required
+            minLength={6}
+            autoComplete="new-password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            className={inputClass}
+            placeholder="••••••••"
+          />
+        </div>
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-50"
+        >
+          {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+          {t('auth.saveNewPassword')}
+        </button>
+      </form>
     </div>
   );
 }
