@@ -5,6 +5,7 @@ import {
   Clock,
   Download,
   Loader2,
+  Plus,
   RefreshCw,
   Square,
   Trophy,
@@ -377,6 +378,7 @@ function AutoPanel({
 
   return (
     <div className="space-y-2">
+      <NewAutoForm chatId={chatId} onCreated={onChanged} />
       {error && <p className="text-xs text-error-300">{error}</p>}
       {settings?.lesson_time && (
         <div className={`${card} flex items-center justify-between gap-2 p-3 text-xs`}>
@@ -415,6 +417,109 @@ function AutoPanel({
       {!autos.length && !settings?.lesson_time && (
         <p className={`${card} p-6 text-center text-xs text-dark-500`}>{t('botGroups.noAuto')}</p>
       )}
+    </div>
+  );
+}
+
+/**
+ * A repeating message for the group: how many times, every how many minutes.
+ * The row is all it takes -- the backend's worker sends it when next_at comes.
+ */
+function NewAutoForm({ chatId, onCreated }: { chatId: number; onCreated: () => void }) {
+  const { t } = useLanguage();
+  const [text, setText] = useState('');
+  const [times, setTimes] = useState('1');
+  const [minutes, setMinutes] = useState('60');
+  const [start, setStart] = useState('');
+  const [tag, setTag] = useState(false);
+  const [team, setTeam] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const timesN = Number(times);
+  const minutesN = Number(minutes);
+  const valid = text.trim() !== '' && Number.isInteger(timesN) && timesN >= 0 && minutesN > 0;
+
+  const submit = async () => {
+    if (!valid) {
+      setError(t('botGroups.autoInvalid'));
+      return;
+    }
+    setBusy(true);
+    setError('');
+    const { error: insertError } = await supabase.from('class_autos').insert({
+      chat_id: chatId,
+      text: text.trim(),
+      times: timesN,
+      every_minutes: minutesN,
+      tag,
+      team: tag && team.trim() ? team.trim() : null,
+      next_at: start ? new Date(start).toISOString() : new Date().toISOString(),
+    });
+    setBusy(false);
+    if (insertError) {
+      setError(insertError.message);
+      return;
+    }
+    setText('');
+    setStart('');
+    onCreated();
+  };
+
+  const input =
+    'w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-1.5 text-xs text-white outline-none focus:border-primary-500';
+
+  return (
+    <div className={`${card} space-y-2 p-3`}>
+      <p className="flex items-center gap-1.5 text-xs font-bold text-white">
+        <Plus className="h-3.5 w-3.5" /> {t('botGroups.newAuto')}
+      </p>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={t('botGroups.autoText')}
+        rows={3}
+        maxLength={4000}
+        className={input}
+      />
+      <div className="grid gap-2 sm:grid-cols-3">
+        <label className="space-y-1 text-[11px] text-dark-400">
+          <span>{t('botGroups.autoTimes')}</span>
+          <input type="number" min={0} step={1} value={times} onChange={(e) => setTimes(e.target.value)} className={input} />
+        </label>
+        <label className="space-y-1 text-[11px] text-dark-400">
+          <span>{t('botGroups.autoMinutes')}</span>
+          <input type="number" min={1} step="any" value={minutes} onChange={(e) => setMinutes(e.target.value)} className={input} />
+        </label>
+        <label className="space-y-1 text-[11px] text-dark-400">
+          <span>{t('botGroups.autoStart')}</span>
+          <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className={input} />
+        </label>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-1.5 text-xs text-dark-300">
+          <input type="checkbox" checked={tag} onChange={(e) => setTag(e.target.checked)} /> {t('botGroups.autoTag')}
+        </label>
+        {tag && (
+          <input
+            value={team}
+            onChange={(e) => setTeam(e.target.value)}
+            placeholder={t('botGroups.autoTeam')}
+            className={`${input} w-40`}
+          />
+        )}
+        <span className="text-[11px] text-dark-500">
+          {t('botGroups.autoSummary').replace('{times}', timesN > 0 ? String(timesN) : '∞').replace('{minutes}', minutes || '?')}
+        </span>
+        <button
+          onClick={submit}
+          disabled={busy}
+          className="ml-auto flex items-center gap-1.5 rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clock className="h-3.5 w-3.5" />} {t('botGroups.autoCreate')}
+        </button>
+      </div>
+      {error && <p className="text-xs text-error-300">{error}</p>}
     </div>
   );
 }

@@ -188,13 +188,19 @@ export async function runDueAutoMessages() {
   for (const auto of due) {
     const sentCount = auto.sent_count + 1;
     const done = auto.times > 0 && sentCount >= auto.times;
+    // Step from the slot it was due at, not from now, so "every 1440 minutes"
+    // stays at the same time of day; slots missed while the worker was down
+    // are skipped rather than sent in a burst.
+    const every = auto.every_minutes * 60 * 1000;
+    let next = new Date(auto.next_at).getTime() + every;
+    if (next <= Date.now()) next = Date.now() + every;
     const claimed = rows(
       await db()
         .from("class_autos")
         .update({
           sent_count: sentCount,
           active: !done,
-          next_at: new Date(Date.now() + auto.every_minutes * 60 * 1000).toISOString(),
+          next_at: new Date(next).toISOString(),
           updated_at: nowIso(),
         })
         .eq("id", auto.id)
@@ -205,16 +211,27 @@ export async function runDueAutoMessages() {
     fired += 1;
     const chatId = Number(auto.chat_id);
     const label = auto.times > 0 ? ` (${sentCount}/${auto.times})` : "";
-    if (auto.tag) {
+    enqueue(chatId, async (stopped) => {
+      const res = await send(chatId, escapeHtml(`${auto.text}${label}`));
+      if (botGone(res)) {
+        await db().from("class_autos").update({ active: false, updated_at: nowIso() }).eq("id", auto.id);
+        console.error(`classroom: auto #${auto.short_id} stopped, bot can no longer post in ${chatId}`);
+        return;
+      }
+      if (!auto.tag) return;
       const list = await members(chatId, auto.team);
       const settings = await settingsFor(chatId);
-      enqueue(chatId, (stopped) => tagRun(chatId, list, `${auto.text}${label}`, settings, stopped));
-    } else {
-      enqueue(chatId, () => send(chatId, escapeHtml(`${auto.text}${label}`)));
-    }
+      await sleep(Math.max(settings.gapSeconds * 1000, MIN_GROUP_GAP_MS));
+      await tagRun(chatId, list, "", settings, stopped);
+    });
   }
   return fired;
 }
+
+/** True when Telegram says the bot can't post in the chat any more (kicked, group deleted). */
+const botGone = (res) =>
+  res?.ok === false &&
+  (res.error_code === 403 || /chat not found|not enough rights|have no rights/i.test(res.description ?? ""));
 
 // ------------------------------------------------------------- commands
 
