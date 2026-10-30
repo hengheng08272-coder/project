@@ -21,6 +21,7 @@ import * as khInvoice from "./khInvoice.js";
 import * as watch from "./watch.js";
 import { handleCallback as handleBotCallback, handleMessage as handleLinkBotMessage } from "./linkBot.js";
 import * as translate from "./translate.js";
+import * as classroom from "./classroom.js";
 import { recordManualUpload } from "./library.js";
 import * as mirror from "./mirror.js";
 import * as pageResolve from "./pageResolve.js";
@@ -970,6 +971,13 @@ app.post(
       return res.json({ ok: true });
     }
 
+    // A student answering a classroom /quiz.
+    const pollAnswer = req.body?.poll_answer;
+    if (pollAnswer) {
+      spawn(classroom.handlePollAnswer(pollAnswer), `quiz answer from ${pollAnswer.user?.id}`);
+      return res.json({ ok: true });
+    }
+
     const inline = req.body?.inline_query;
     if (inline) {
       spawn(translate.handleInlineQuery(inline), `inline query from ${inline.from?.id}`);
@@ -1050,7 +1058,7 @@ async function registerBotWebhook() {
   if (!config.telegramLoginBotToken || !config.publicUrl) return;
   const url = `${config.publicUrl.replace(/\/$/, "")}/api/telegram-bot/webhook`;
   try {
-    const result = await botApi("setWebhook", { url, allowed_updates: ["message", "callback_query", "inline_query"] });
+    const result = await botApi("setWebhook", { url, allowed_updates: ["message", "callback_query", "inline_query", "poll_answer"] });
     if (result?.ok) console.log(`Telegram bot webhook set to ${url}`);
   } catch (err) {
     console.error("Could not set the Telegram bot webhook:", err?.message ?? err);
