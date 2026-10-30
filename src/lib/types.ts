@@ -263,6 +263,7 @@ export type PageKey =
   | 'urllists'
   | 'settings'
   | 'guide'
+  | 'botgroups'
   | 'admin';
 
 export type Capability = 'basic' | 'pro';

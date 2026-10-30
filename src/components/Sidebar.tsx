@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   Link2,
   LogOut,
+  MessagesSquare,
   Settings,
   ShieldCheck,
   Users,
@@ -48,7 +49,12 @@ export function Sidebar({ currentPage, onNavigate, collapsed, isAdmin }: Sidebar
     { key: 'urllists', label: t('nav.urllists'), icon: Link2 },
     { key: 'settings', label: t('nav.settings'), icon: Settings },
     { key: 'guide', label: t('nav.guide'), icon: BookOpen },
-    ...(isAdmin ? [{ key: 'admin' as PageKey, label: t('nav.admin'), icon: ShieldCheck }] : []),
+    ...(isAdmin
+      ? [
+          { key: 'botgroups' as PageKey, label: t('nav.botgroups'), icon: MessagesSquare },
+          { key: 'admin' as PageKey, label: t('nav.admin'), icon: ShieldCheck },
+        ]
+      : []),
   ];
 
   // Green only when everything the app needs is actually reachable.
