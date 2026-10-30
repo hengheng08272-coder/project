@@ -1,20 +1,25 @@
 /**
- * Tests the classroom bot and sends homework to students, from your own
- * computer -- no Telegram group commands needed.
+ * Tests the group bot and sends messages to members -- announcements,
+ * homework, documents, photos, videos -- from your own computer.
  *
  * Settings come from backend-node/classroom.env (copy classroom.env.example).
  *
  *   npm run classroom -- check                 bot, group and database are set up right
  *   npm run classroom -- students              the class roster
- *   npm run classroom -- homework              send HOMEWORK_TEXT from classroom.env
- *   npm run classroom -- homework "text"       send this text instead
- *   npm run classroom -- homework "text" --dry-run   show who would get it, send nothing
- *   npm run classroom -- stats                 who has read the latest homework
+ *   npm run classroom -- send "text"                     announcement to the group + every member's DM
+ *   npm run classroom -- send "text" --file plan.pdf     with a document / photo / video / audio
+ *   npm run classroom -- send "text" --title "Meeting"   custom title
+ *   npm run classroom -- send "text" --no-group          DMs only, nothing posted in the group
+ *   npm run classroom -- send "text" --dry-run           show who would get it, send nothing
+ *   npm run classroom -- send                            send MESSAGE_TEXT from classroom.env
+ *   npm run classroom -- homework                        send HOMEWORK_TEXT (same options)
+ *   npm run classroom -- stats                           who has read the latest one
  *
- * Homework is saved as a lesson (so students can open it again with /lesson,
- * and /lessonstats works), posted in the group, and DMed to every student
+ * Everything sent is saved as a lesson (members reopen it with /lesson,
+ * and /lessonstats works), posted in the group, and DMed to every member
  * with a "✅ read" button. Sent at Telegram's pace; 429s are waited out.
  */
+import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -147,53 +152,115 @@ async function students() {
   for (const m of list) console.log(`  ${String(m.user_id).padEnd(12)} ${nameOf(m)}${m.team ? `  [${m.team}]` : ""}`);
 }
 
-async function homework(args) {
+// What Telegram calls each kind of file, picked from the file's extension.
+const MEDIA_BY_EXT = [
+  [/\.(jpe?g|png|webp)$/i, "photo", "sendPhoto"],
+  [/\.(mp4|mov|m4v)$/i, "video", "sendVideo"],
+  [/\.(mp3|m4a|wav|flac)$/i, "audio", "sendAudio"],
+  [/\.ogg$/i, "voice", "sendVoice"],
+  [/./, "document", "sendDocument"],
+];
+
+/** Uploads a local file once (multipart) and returns Telegram's file_id for re-sending. */
+async function uploadFile(chatId, filePath, method, field, caption) {
+  const form = new FormData();
+  form.set("chat_id", String(chatId));
+  form.set(field, new Blob([await fs.readFile(filePath)]), path.basename(filePath));
+  if (caption) {
+    form.set("caption", caption);
+    form.set("parse_mode", "HTML");
+  }
+  const res = await fetch(`https://api.telegram.org/bot${TOKEN}/${method}`, { method: "POST", body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!data.ok) throw new Error(`Upload failed: ${data.description ?? res.status}`);
+  const media = data.result[field];
+  return Array.isArray(media) ? media[media.length - 1].file_id : media.file_id;
+}
+
+function parseSendArgs(args) {
+  const opts = { dryRun: false, noGroup: false, file: null, title: null, words: [] };
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i];
+    if (a === "--dry-run") opts.dryRun = true;
+    else if (a === "--no-group") opts.noGroup = true;
+    else if (a === "--file") opts.file = args[++i];
+    else if (a === "--title") opts.title = args[++i];
+    else opts.words.push(a);
+  }
+  return opts;
+}
+
+/**
+ * Sends a message -- an announcement, homework, a document, a photo or a
+ * video -- to every member: posted in the group (unless --no-group) and DMed
+ * with a "✅ read" button. Saved as the next lesson so /lesson, /lessonstats
+ * and `stats` know about it.
+ */
+async function send(args, defaults = {}) {
   requireSettings("TELEGRAM_LOGIN_BOT_TOKEN", "CLASS_CHAT_ID", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY");
-  const dryRun = args.includes("--dry-run");
-  const text = args.filter((a) => a !== "--dry-run").join(" ").trim() || env("HOMEWORK_TEXT");
-  const title = env("HOMEWORK_TITLE") || "កិច្ចការផ្ទះ";
-  if (!text) return bad('No homework text: npm run classroom -- homework "..." or set HOMEWORK_TEXT');
+  const opts = parseSendArgs(args);
+  const text = opts.words.join(" ").trim() || env(defaults.textVar ?? "MESSAGE_TEXT");
+  const title = opts.title || env(defaults.titleVar ?? "MESSAGE_TITLE") || defaults.title || "សារ";
+  if (!text && !opts.file) return bad('Nothing to send: npm run classroom -- send "text" [--file path]');
+  if (opts.file) await fs.access(opts.file).catch(() => { throw new Error(`File not found: ${opts.file}`); });
 
   const list = await roster();
-  console.log(`📘 ${title}\n${text}\n\n→ ${list.length} student(s)${dryRun ? " (dry run, nothing sent)" : ""}`);
-  if (dryRun) {
+  console.log(`📘 ${title}${opts.file ? `  📎 ${path.basename(opts.file)}` : ""}\n${text}\n`);
+  console.log(`→ group: ${opts.noGroup ? "no" : "yes"} · DM: ${list.length} member(s)${opts.dryRun ? " (dry run, nothing sent)" : ""}`);
+  if (opts.dryRun) {
     for (const m of list) console.log(`  • ${nameOf(m)}`);
     return;
   }
 
-  // Saved as the next lesson, so /lesson and /lessonstats know about it.
   const { data: last } = await db()
     .from("class_lessons").select("position").eq("chat_id", CHAT_ID).order("position", { ascending: false }).limit(1);
   const position = (last?.[0]?.position ?? 0) + 1;
+  const header = `📘 ${position}. ${title}`;
+  const [, kind, method] = opts.file ? MEDIA_BY_EXT.find(([re]) => re.test(opts.file)) : [null, "text", "sendMessage"];
+
+  // A file is uploaded once -- into the group, or the first member's DM --
+  // and every other copy re-uses Telegram's file_id.
+  let fileId = null;
+  let uploadedTo = null;
+  const caption = escapeHtml(`${header}\n\n${text}`).slice(0, 1024);
+  if (opts.file) {
+    uploadedTo = opts.noGroup ? list[0]?.user_id : CHAT_ID;
+    if (!uploadedTo) return bad("No members to send to");
+    fileId = await uploadFile(uploadedTo, opts.file, method, kind, opts.noGroup ? null : caption);
+  } else if (!opts.noGroup) {
+    await tg("sendMessage", {
+      chat_id: CHAT_ID,
+      text: `<b>${escapeHtml(header)}</b>\n\n${escapeHtml(text)}\n\n✉️ បានផ្ញើទៅ DM ម្នាក់ៗ — ចុច ✅ ពេលអានរួច`,
+      parse_mode: "HTML",
+    });
+  }
+
   const { data: saved, error } = await db()
     .from("class_lessons")
-    .insert({ chat_id: CHAT_ID, position, title, kind: "text", text })
+    .insert({ chat_id: CHAT_ID, position, title, kind, file_id: fileId, text })
     .select("id")
     .single();
-  if (error) return bad(`Could not save the homework: ${error.message}`);
+  if (error) return bad(`Could not save it: ${error.message}`);
 
-  await tg("sendMessage", {
-    chat_id: CHAT_ID,
-    text: `📘 <b>${escapeHtml(title)}</b> (មេរៀនទី ${position})\n\n${escapeHtml(text)}\n\n✉️ បានផ្ញើទៅ DM របស់សិស្សម្នាក់ៗ — ចុច ✅ ពេលអានរួច`,
-    parse_mode: "HTML",
-  });
-
+  const markup = { inline_keyboard: [[{ text: "✅ បានអានហើយ", callback_data: `cls:read:${saved.id}` }]] };
   let sent = 0;
   const missing = [];
   for (const m of list) {
-    const res = await tg("sendMessage", {
-      chat_id: m.user_id,
-      text: escapeHtml(`📘 មេរៀនទី ${position}: ${title}\n\n${text}`).slice(0, 4096),
-      parse_mode: "HTML",
-      reply_markup: { inline_keyboard: [[{ text: "✅ បានអានហើយ", callback_data: `cls:read:${saved.id}` }]] },
-    });
+    const res = fileId
+      ? await tg(method, { chat_id: m.user_id, [kind]: fileId, caption, parse_mode: "HTML", reply_markup: markup })
+      : await tg("sendMessage", {
+          chat_id: m.user_id,
+          text: escapeHtml(`${header}\n\n${text}`).slice(0, 4096),
+          parse_mode: "HTML",
+          reply_markup: markup,
+        });
     if (res.ok) sent += 1;
     else missing.push(m);
     process.stdout.write(`\r   sent ${sent}/${list.length}`);
     await sleep(DM_GAP_MS);
   }
   console.log("");
-  ok(`DM sent to ${sent}/${list.length} student(s) — lesson #${position}`);
+  ok(`DM sent to ${sent}/${list.length} member(s) — saved as #${position}`);
   if (missing.length) {
     bad(`${missing.length} have not started the bot (Telegram does not allow a bot to DM them first):`);
     for (const m of missing) console.log(`  • ${nameOf(m)}`);
@@ -201,12 +268,15 @@ async function homework(args) {
   console.log(`\nCheck who read it: npm run classroom -- stats   (or /lessonstats ${position} in the group)`);
 }
 
+/** `homework` is `send` with the homework defaults from classroom.env. */
+const homework = (args) => send(args, { textVar: "HOMEWORK_TEXT", titleVar: "HOMEWORK_TITLE", title: "កិច្ចការផ្ទះ" });
+
 async function stats() {
   requireSettings("CLASS_CHAT_ID", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY");
   const { data: lessons } = await db()
     .from("class_lessons").select("id, position, title").eq("chat_id", CHAT_ID).order("position", { ascending: false }).limit(1);
   const lesson = lessons?.[0];
-  if (!lesson) return bad("No homework/lessons yet");
+  if (!lesson) return bad("Nothing sent yet");
   const { data: reads } = await db().from("class_lesson_reads").select("user_id").eq("lesson_id", lesson.id);
   const read = new Set((reads ?? []).map((r) => Number(r.user_id)));
   const list = await roster();
@@ -216,9 +286,9 @@ async function stats() {
 }
 
 const [command = "check", ...args] = process.argv.slice(2);
-const commands = { check, students, homework, stats };
+const commands = { check, students, send, homework, stats };
 if (!commands[command]) {
-  console.log("Usage: npm run classroom -- check | students | homework [\"text\"] [--dry-run] | stats");
+  console.log('Usage: npm run classroom -- check | students | send "text" [--file path] [--title t] [--no-group] [--dry-run] | homework | stats');
   process.exit(1);
 }
 if (!Number.isFinite(CHAT_ID) && command !== "check") requireSettings("CLASS_CHAT_ID");
