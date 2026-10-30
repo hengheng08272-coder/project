@@ -21,6 +21,7 @@ import { actionForLabel, languageKeyboard, mainKeyboard, progressBar, texts } fr
 import * as botDeliver from "./botDeliver.js";
 import * as botJobs from "./botJobs.js";
 import * as botPay from "./botPay.js";
+import * as classroom from "./classroom.js";
 import * as emojiMaker from "./emojiMaker.js";
 import * as khInvoice from "./khInvoice.js";
 import * as translate from "./translate.js";
@@ -256,6 +257,13 @@ export async function handleMessage(message) {
   const text = String(message?.text ?? "").trim();
   if (!chatId || !from?.id) return;
 
+  // In a group the bot is a classroom helper only (classroom.js); the
+  // private-chat menu below never answers there.
+  if (message.chat.type === "group" || message.chat.type === "supergroup") {
+    await classroom.handleGroupMessage(message);
+    return;
+  }
+
   const startPayload = /^\/start(?:\s+(\S+))?$/.exec(text)?.[1] ?? null;
   const user = await ensureUser(from, startPayload);
   const t = texts(user.language);
@@ -307,6 +315,13 @@ export async function handleMessage(message) {
   }
 
   if (startPayload && (await khInvoice.handleStart(chatId, user, startPayload))) return;
+
+  // A student's lesson library (classroom.js): /lesson, or the "Start bot"
+  // button under a class's ✋ join message.
+  if (startPayload === "class" || /^\/lessons?$/.test(text)) {
+    await classroom.showStudentLessons(chatId, from.id);
+    return;
+  }
 
   if (/^\/start\b/.test(text) || text === "/help" || !text) {
     const name = from.first_name || from.username || "";
@@ -691,6 +706,7 @@ function commandAction(text) {
 /** The language buttons under "🌐 ភាសា". Returns true when it handled the tap. */
 export async function handleCallback(cq) {
   const data = String(cq?.data ?? "");
+  if (data.startsWith("cls:")) return classroom.handleCallback(cq);
   if (data.startsWith("inv:") && cq.from?.id) {
     return khInvoice.handleCallback(cq, await ensureUser(cq.from, null));
   }
